@@ -36,5 +36,5 @@ echo ""
 echo "Press Ctrl+C to stop the server"
 echo ""
 
-python crisp_integration.py
+python app.py
 

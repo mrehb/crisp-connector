@@ -8,5 +8,5 @@ cmds = ['pip install --upgrade pip', 'pip install -r requirements.txt']
 cmds = ['echo "Build phase complete"']
 
 [start]
-cmd = 'gunicorn crisp_integration:app --bind 0.0.0.0:$PORT --workers 2 --timeout 60 --log-level info'
+cmd = 'gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 60 --log-level info'
 

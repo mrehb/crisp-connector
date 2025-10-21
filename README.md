@@ -142,7 +142,7 @@ curl -X POST http://localhost:5000/webhook/jotform \
 
 ```
 crisp-connector/
-├── crisp_integration.py   # Main application
+├── app.py                 # Main application (Flask server)
 ├── requirements.txt       # Python dependencies
 ├── Procfile              # Process configuration
 ├── railway.json          # Railway configuration

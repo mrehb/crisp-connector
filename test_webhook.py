@@ -62,7 +62,7 @@ def test_webhook(url="http://localhost:5000/webhook/jotform"):
     except requests.exceptions.ConnectionError:
         print("\n❌ Error: Could not connect to server.")
         print("Make sure the server is running:")
-        print("  python crisp_integration.py")
+        print("  python app.py")
         print("  or")
         print("  ./start.sh")
         return False
