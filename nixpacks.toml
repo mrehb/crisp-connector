@@ -1,0 +1,12 @@
+[phases.setup]
+nixPkgs = ['python311', 'gcc']
+
+[phases.install]
+cmds = ['pip install --upgrade pip', 'pip install -r requirements.txt']
+
+[phases.build]
+cmds = ['echo "Build phase complete"']
+
+[start]
+cmd = 'gunicorn crisp_integration:app --bind 0.0.0.0:$PORT --workers 2 --timeout 60 --log-level info'
+
