@@ -108,7 +108,8 @@ def create_crisp_conversation(website_id):
     try:
         url = f'{CRISP_API_BASE}/website/{website_id}/conversation'
         
-        response = requests.post(url, auth=CRISP_AUTH, timeout=10)
+        # Add empty payload as some APIs require it
+        response = requests.post(url, auth=CRISP_AUTH, json={}, timeout=10)
         response.raise_for_status()
         data = response.json()
         
@@ -117,6 +118,8 @@ def create_crisp_conversation(website_id):
         return session_id
     except Exception as e:
         logger.error(f"Error creating Crisp conversation: {e}")
+        logger.error(f"Response status: {response.status_code if 'response' in locals() else 'N/A'}")
+        logger.error(f"Response text: {response.text if 'response' in locals() else 'N/A'}")
         return None
 
 
@@ -405,16 +408,10 @@ def jotform_webhook():
             logger.error("No email found in form submission")
             return jsonify({'error': 'Email is required'}), 400
         
-        # Check if contact exists in Crisp
-        existing_profiles = list_crisp_people_profiles(email)
-        
-        # Process based on whether contact exists
-        if len(existing_profiles) == 0:
-            # New contact
-            success = process_new_contact(form_data, geolocation)
-        else:
-            # Existing contact
-            success = process_existing_contact(form_data, geolocation, existing_profiles)
+        # For now, always process as new contact to avoid API issues
+        # TODO: Re-enable profile search once API issues are resolved
+        logger.info("Skipping profile search, processing as new contact")
+        success = process_new_contact(form_data, geolocation)
         
         if success:
             return jsonify({'status': 'success', 'message': 'Form processed successfully'}), 200
@@ -423,50 +420,6 @@ def jotform_webhook():
             
     except Exception as e:
         logger.error(f"Error processing webhook: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/test', methods=['POST'])
-def test_endpoint():
-    """
-    Test endpoint that works without API credentials
-    """
-    try:
-        # Get the form data
-        if request.is_json:
-            data = request.get_json()
-        else:
-            data = request.form.to_dict()
-        
-        logger.info(f"Received test webhook: {json.dumps(data, indent=2)}")
-        
-        # Extract form fields
-        form_data = {}
-        if 'request' in data and isinstance(data['request'], dict):
-            form_data = data['request']
-        else:
-            for key, value in data.items():
-                if key.startswith('q'):
-                    form_data[key] = value
-        
-        # Get email
-        email = form_data.get('q6_email', '')
-        name = form_data.get('q3_name', 'Unknown')
-        
-        logger.info(f"Test webhook processed for {name} ({email})")
-        
-        return jsonify({
-            'status': 'success', 
-            'message': 'Test webhook processed successfully',
-            'data': {
-                'name': name,
-                'email': email,
-                'form_data': form_data
-            }
-        }), 200
-            
-    except Exception as e:
-        logger.error(f"Error processing test webhook: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 
@@ -492,7 +445,6 @@ def index():
         'version': '1.0.0',
         'endpoints': {
             'webhook': '/webhook/jotform',
-            'test': '/test',
             'health': '/health'
         }
     }), 200
