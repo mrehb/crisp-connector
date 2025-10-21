@@ -426,6 +426,50 @@ def jotform_webhook():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/test', methods=['POST'])
+def test_endpoint():
+    """
+    Test endpoint that works without API credentials
+    """
+    try:
+        # Get the form data
+        if request.is_json:
+            data = request.get_json()
+        else:
+            data = request.form.to_dict()
+        
+        logger.info(f"Received test webhook: {json.dumps(data, indent=2)}")
+        
+        # Extract form fields
+        form_data = {}
+        if 'request' in data and isinstance(data['request'], dict):
+            form_data = data['request']
+        else:
+            for key, value in data.items():
+                if key.startswith('q'):
+                    form_data[key] = value
+        
+        # Get email
+        email = form_data.get('q6_email', '')
+        name = form_data.get('q3_name', 'Unknown')
+        
+        logger.info(f"Test webhook processed for {name} ({email})")
+        
+        return jsonify({
+            'status': 'success', 
+            'message': 'Test webhook processed successfully',
+            'data': {
+                'name': name,
+                'email': email,
+                'form_data': form_data
+            }
+        }), 200
+            
+    except Exception as e:
+        logger.error(f"Error processing test webhook: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """
@@ -448,6 +492,7 @@ def index():
         'version': '1.0.0',
         'endpoints': {
             'webhook': '/webhook/jotform',
+            'test': '/test',
             'health': '/health'
         }
     }), 200
