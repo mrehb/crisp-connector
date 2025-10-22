@@ -318,21 +318,18 @@ def send_crisp_file_message(session_id, file_url, file_name="Uploaded File"):
         
         url = f'{CRISP_API_BASE}/website/{CRISP_WEBSITE_ID}/conversation/{session_id}/message'
         
-        # Send as file message from user via email (matching Make blueprint)
-        # Crisp expects just the extension (e.g., "png") in the type field, not MIME type
-        # Matching Make: type = "image/{extension after dot}"
+        # Send as file message from user via email (matching Make blueprint EXACTLY)
+        # Make blueprint uses: original = {} (empty), content.type = "image/{last 4 chars}"
         payload = {
             'type': 'file',
             'from': 'user',
             'origin': 'email',
             'user': {},
-            'original': {
-                'type': f'image/{file_ext}'  # Crisp expects format: "image/png", "image/jpg", etc
-            },
+            'original': {},  # Empty object matching Make blueprint
             'content': {
                 'name': file_name,
                 'url': file_url,
-                'type': f'image/{file_ext}'  # Same format in content.type
+                'type': f'image/{file_ext}'  # "image/png", "image/jpg", etc
             }
         }
         
