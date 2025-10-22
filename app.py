@@ -319,14 +319,14 @@ def send_crisp_file_message(session_id, file_url, file_name="Uploaded File"):
         
         url = f'{CRISP_API_BASE}/website/{CRISP_WEBSITE_ID}/conversation/{session_id}/message'
         
-        # Send as file message from user via email (matching Make blueprint EXACTLY)
-        # Make: type = "image/{last 4 chars}" → "image/.png"
+        # Try WITHOUT original field at all (Make might be omitting it entirely, not sending {})
+        # The blueprint shows original:{} but that might mean "don't send this field"
         payload = {
             'type': 'file',
             'from': 'user',
             'origin': 'email',
             'user': {},
-            'original': {},  # Empty object matching Make blueprint
+            # original field OMITTED - not even as empty object
             'content': {
                 'name': file_name,
                 'url': file_url,
@@ -334,6 +334,7 @@ def send_crisp_file_message(session_id, file_url, file_name="Uploaded File"):
             }
         }
         
+        logger.info(f"Sending file payload (without original field): {json.dumps(payload, indent=2)}")
         response = requests.post(url, auth=CRISP_AUTH, headers=CRISP_HEADERS, json=payload, timeout=10)
         
         # Accept both 201 and 202 as success
