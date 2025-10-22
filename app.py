@@ -509,21 +509,32 @@ def jotform_webhook():
     Webhook endpoint to receive JotForm submissions
     """
     try:
+        # Log raw request info for debugging
+        logger.info("=" * 80)
+        logger.info("NEW WEBHOOK RECEIVED")
+        logger.info(f"Content-Type: {request.content_type}")
+        logger.info(f"Method: {request.method}")
+        logger.info(f"Headers: {dict(request.headers)}")
+        
         # Get the form data
         if request.is_json:
             data = request.get_json()
+            logger.info("Parsed as JSON")
         else:
             # JotForm sends data as form-encoded
             data = request.form.to_dict()
+            logger.info(f"Parsed as form-encoded. Keys: {list(data.keys())}")
             # Try to parse rawRequest if it exists
             if 'rawRequest' in data:
                 try:
                     raw_data = json.loads(data['rawRequest'])
                     data.update(raw_data)
-                except:
-                    pass
+                    logger.info("Parsed rawRequest field")
+                except Exception as e:
+                    logger.warning(f"Could not parse rawRequest: {e}")
         
-        logger.info(f"Received JotForm webhook: {json.dumps(data, indent=2)}")
+        logger.info(f"Final parsed data: {json.dumps(data, indent=2)}")
+        logger.info("=" * 80)
         
         # Extract form fields - adjust these based on your JotForm field IDs
         form_data = {}
@@ -616,6 +627,37 @@ def health_check():
     }), 200
 
 
+@app.route('/webhook/debug', methods=['POST'])
+def webhook_debug():
+    """
+    Debug endpoint to capture and display raw webhook payload
+    """
+    try:
+        payload_info = {
+            'method': request.method,
+            'content_type': request.content_type,
+            'headers': dict(request.headers),
+            'args': request.args.to_dict(),
+            'form': request.form.to_dict(),
+            'json': request.get_json(silent=True),
+            'data': request.data.decode('utf-8') if request.data else None
+        }
+        
+        logger.info("=" * 80)
+        logger.info("DEBUG WEBHOOK RECEIVED")
+        logger.info(json.dumps(payload_info, indent=2))
+        logger.info("=" * 80)
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Debug payload received and logged',
+            'payload': payload_info
+        }), 200
+    except Exception as e:
+        logger.error(f"Error in debug webhook: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/', methods=['GET'])
 def index():
     """
@@ -626,6 +668,7 @@ def index():
         'version': '1.0.0',
         'endpoints': {
             'webhook': '/webhook/jotform',
+            'webhook_debug': '/webhook/debug',
             'health': '/health'
         }
     }), 200
