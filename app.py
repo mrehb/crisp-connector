@@ -302,6 +302,66 @@ def send_crisp_message(session_id, message_content, message_type='text'):
         return False
 
 
+def send_crisp_file_message(session_id, file_url, file_name="Uploaded File"):
+    """
+    Send a file/image message in a Crisp conversation
+    File-agnostic - detects file type from URL
+    """
+    try:
+        # Extract file extension from URL
+        file_ext = file_url.split('.')[-1].lower() if '.' in file_url else ''
+        
+        # Determine MIME type based on extension
+        mime_types = {
+            'png': 'image/png',
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'gif': 'image/gif',
+            'webp': 'image/webp',
+            'pdf': 'application/pdf',
+            'doc': 'application/msword',
+            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'xls': 'application/vnd.ms-excel',
+            'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'zip': 'application/zip',
+            'txt': 'text/plain'
+        }
+        
+        mime_type = mime_types.get(file_ext, 'application/octet-stream')
+        logger.info(f"Detected file type: {file_ext} -> {mime_type}")
+        
+        url = f'{CRISP_API_BASE}/website/{CRISP_WEBSITE_ID}/conversation/{session_id}/message'
+        
+        # Send as file message from user via email (matching blueprint)
+        payload = {
+            'type': 'file',
+            'from': 'user',
+            'origin': 'email',
+            'user': {},
+            'original': {},
+            'content': {
+                'name': file_name,
+                'url': file_url,
+                'type': mime_type
+            }
+        }
+        
+        response = requests.post(url, auth=CRISP_AUTH, headers=CRISP_HEADERS, json=payload, timeout=10)
+        
+        # Accept both 201 and 202 as success
+        if response.status_code in [201, 202]:
+            logger.info(f"Sent file message to conversation: {session_id} - Status: {response.status_code}")
+            return True
+        
+        logger.error(f"Failed to send file. Status: {response.status_code}, Response: {response.text}")
+        return False
+        
+    except Exception as e:
+        logger.error(f"Error sending file message: {e}")
+        logger.error(f"Response text: {response.text if 'response' in locals() else 'N/A'}")
+        return False
+
+
 def update_crisp_contact(people_id, email, person_data):
     """
     Update an existing Crisp contact
@@ -398,6 +458,16 @@ def process_new_contact(form_data, geolocation, ip_address):
         message_sent = send_crisp_message(session_id, message, message_type='text')
         if not message_sent:
             logger.warning(f"Message not sent to conversation, but stored in metadata['data']['form_message']")
+    
+    # Send file upload if present (matching Make blueprint file handling)
+    upload_files = form_data.get('uploadAn', [])
+    if upload_files and isinstance(upload_files, list):
+        for file_url in upload_files:
+            if file_url:
+                # Extract file name from URL
+                file_name = file_url.split('/')[-1].replace('%20', ' ')
+                logger.info(f"Sending file: {file_name} from {file_url}")
+                send_crisp_file_message(session_id, file_url, file_name)
     
     logger.info(f"Successfully processed new contact: {email}")
     logger.info(f"Conversation ID: {session_id} - Check Crisp dashboard")
@@ -498,6 +568,16 @@ def process_existing_contact(form_data, geolocation, existing_profiles, ip_addre
         if not message_sent:
             logger.warning(f"Message not sent to conversation, but stored in metadata['data']['form_message']")
     
+    # Send file upload if present (matching Make blueprint file handling)
+    upload_files = form_data.get('uploadAn', [])
+    if upload_files and isinstance(upload_files, list):
+        for file_url in upload_files:
+            if file_url:
+                # Extract file name from URL
+                file_name = file_url.split('/')[-1].replace('%20', ' ')
+                logger.info(f"Sending file: {file_name} from {file_url}")
+                send_crisp_file_message(session_id, file_url, file_name)
+    
     logger.info(f"Successfully processed existing contact: {email}")
     logger.info(f"Conversation ID: {session_id} - Check Crisp dashboard")
     return True
@@ -521,19 +601,24 @@ def jotform_webhook():
             data = request.get_json()
             logger.info("Parsed as JSON")
         else:
-            # JotForm sends data as form-encoded
+            # JotForm sends data as form-encoded or multipart
             data = request.form.to_dict()
-            logger.info(f"Parsed as form-encoded. Keys: {list(data.keys())}")
-            # Try to parse rawRequest if it exists
+            logger.info(f"Parsed as form-encoded/multipart. Keys: {list(data.keys())}")
+            
+            # JotForm puts the actual form data in 'rawRequest' as JSON string
             if 'rawRequest' in data:
                 try:
                     raw_data = json.loads(data['rawRequest'])
-                    data.update(raw_data)
-                    logger.info("Parsed rawRequest field")
+                    logger.info("Successfully parsed rawRequest field")
+                    # Keep top-level fields (ip, formID, etc) and merge with parsed data
+                    data['request'] = raw_data
+                    logger.info(f"Extracted request data with keys: {list(raw_data.keys())}")
                 except Exception as e:
                     logger.warning(f"Could not parse rawRequest: {e}")
         
-        logger.info(f"Final parsed data: {json.dumps(data, indent=2)}")
+        logger.info(f"Final parsed data keys: {list(data.keys())}")
+        if 'request' in data:
+            logger.info(f"Request data: {json.dumps(data['request'], indent=2)}")
         logger.info("=" * 80)
         
         # Extract form fields - adjust these based on your JotForm field IDs
