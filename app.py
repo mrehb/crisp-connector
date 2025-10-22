@@ -305,47 +305,34 @@ def send_crisp_message(session_id, message_content, message_type='text'):
 def send_crisp_file_message(session_id, file_url, file_name="Uploaded File"):
     """
     Send a file/image message in a Crisp conversation
-    File-agnostic - detects file type from URL
+    File-agnostic - detects file type from URL filename
+    Matching Make blueprint: extracts extension after the dot
     """
     try:
-        # Extract file extension from URL
-        file_ext = file_url.split('.')[-1].split('?')[0].lower() if '.' in file_url else ''
+        # Extract file extension from filename (matching Make blueprint approach)
+        # Get the last part after '/' (filename), then get extension after last '.'
+        filename = file_url.split('/')[-1].split('?')[0]  # Remove query params
+        file_ext = filename.split('.')[-1].lower() if '.' in filename else ''
         
-        # Determine MIME type based on extension
-        mime_types = {
-            'png': 'image/png',
-            'jpg': 'image/jpeg',
-            'jpeg': 'image/jpeg',
-            'gif': 'image/gif',
-            'webp': 'image/webp',
-            'pdf': 'application/pdf',
-            'doc': 'application/msword',
-            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'xls': 'application/vnd.ms-excel',
-            'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'zip': 'application/zip',
-            'txt': 'text/plain'
-        }
-        
-        mime_type = mime_types.get(file_ext, 'application/octet-stream')
-        logger.info(f"Detected file type: {file_ext} -> {mime_type}")
+        logger.info(f"Detected file extension: {file_ext} from filename: {filename}")
         
         url = f'{CRISP_API_BASE}/website/{CRISP_WEBSITE_ID}/conversation/{session_id}/message'
         
-        # Send as file message from user via email (matching blueprint)
-        # The 'original' field requires 'type' property
+        # Send as file message from user via email (matching Make blueprint)
+        # Crisp expects just the extension (e.g., "png") in the type field, not MIME type
+        # Matching Make: type = "image/{extension after dot}"
         payload = {
             'type': 'file',
             'from': 'user',
             'origin': 'email',
             'user': {},
             'original': {
-                'type': mime_type  # Required field
+                'type': f'image/{file_ext}'  # Crisp expects format: "image/png", "image/jpg", etc
             },
             'content': {
                 'name': file_name,
                 'url': file_url,
-                'type': mime_type
+                'type': f'image/{file_ext}'  # Same format in content.type
             }
         }
         
