@@ -442,21 +442,28 @@ def process_new_contact(form_data, geolocation, ip_address):
     else:
         logger.info(f"No agent assignment for country: {country_code}")
     
-    # Send the form message to the conversation (try with fallback methods)
-    if message:
-        message_sent = send_crisp_message(session_id, message, message_type='text')
-        if not message_sent:
-            logger.warning(f"Message not sent to conversation, but stored in metadata['data']['form_message']")
-    
-    # Send file upload if present (matching Make blueprint file handling)
+    # WORKAROUND: Add file URLs directly to message text instead of using file API
+    # (File upload API has permission issues we can't resolve)
     upload_files = form_data.get('uploadAn', [])
+    final_message = message
+    
     if upload_files and isinstance(upload_files, list):
+        file_links = []
         for file_url in upload_files:
             if file_url:
-                # Extract file name from URL
                 file_name = file_url.split('/')[-1].replace('%20', ' ')
-                logger.info(f"Sending file: {file_name} from {file_url}")
-                send_crisp_file_message(session_id, file_url, file_name)
+                file_links.append(f"📎 Attachment: {file_name}\n{file_url}")
+                logger.info(f"File attachment found: {file_name}")
+        
+        if file_links:
+            final_message = message + "\n\n" + "\n\n".join(file_links) if message else "\n\n".join(file_links)
+            logger.info(f"Added {len(file_links)} file link(s) to message text")
+    
+    # Send the form message to the conversation
+    if final_message:
+        message_sent = send_crisp_message(session_id, final_message, message_type='text')
+        if not message_sent:
+            logger.warning(f"Message not sent to conversation, but stored in metadata['data']['form_message']")
     
     logger.info(f"Successfully processed new contact: {email}")
     logger.info(f"Conversation ID: {session_id} - Check Crisp dashboard")
@@ -552,21 +559,28 @@ def process_existing_contact(form_data, geolocation, existing_profiles, ip_addre
     else:
         logger.info(f"No agent assignment for country: {country_code}")
     
-    # Send the form message to the conversation (try with fallback methods)
-    if message:
-        message_sent = send_crisp_message(session_id, message, message_type='text')
-        if not message_sent:
-            logger.warning(f"Message not sent to conversation, but stored in metadata['data']['form_message']")
-    
-    # Send file upload if present (matching Make blueprint file handling)
+    # WORKAROUND: Add file URLs directly to message text instead of using file API
+    # (File upload API has permission issues we can't resolve)
     upload_files = form_data.get('uploadAn', [])
+    final_message = message
+    
     if upload_files and isinstance(upload_files, list):
+        file_links = []
         for file_url in upload_files:
             if file_url:
-                # Extract file name from URL
                 file_name = file_url.split('/')[-1].replace('%20', ' ')
-                logger.info(f"Sending file: {file_name} from {file_url}")
-                send_crisp_file_message(session_id, file_url, file_name)
+                file_links.append(f"📎 Attachment: {file_name}\n{file_url}")
+                logger.info(f"File attachment found: {file_name}")
+        
+        if file_links:
+            final_message = message + "\n\n" + "\n\n".join(file_links) if message else "\n\n".join(file_links)
+            logger.info(f"Added {len(file_links)} file link(s) to message text")
+    
+    # Send the form message to the conversation
+    if final_message:
+        message_sent = send_crisp_message(session_id, final_message, message_type='text')
+        if not message_sent:
+            logger.warning(f"Message not sent to conversation, but stored in metadata['data']['form_message']")
     
     logger.info(f"Successfully processed existing contact: {email}")
     logger.info(f"Conversation ID: {session_id} - Check Crisp dashboard")
