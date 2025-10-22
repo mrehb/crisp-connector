@@ -309,7 +309,7 @@ def send_crisp_file_message(session_id, file_url, file_name="Uploaded File"):
     """
     try:
         # Extract file extension from URL
-        file_ext = file_url.split('.')[-1].lower() if '.' in file_url else ''
+        file_ext = file_url.split('.')[-1].split('?')[0].lower() if '.' in file_url else ''
         
         # Determine MIME type based on extension
         mime_types = {
@@ -333,12 +333,15 @@ def send_crisp_file_message(session_id, file_url, file_name="Uploaded File"):
         url = f'{CRISP_API_BASE}/website/{CRISP_WEBSITE_ID}/conversation/{session_id}/message'
         
         # Send as file message from user via email (matching blueprint)
+        # The 'original' field requires 'type' property
         payload = {
             'type': 'file',
             'from': 'user',
             'origin': 'email',
             'user': {},
-            'original': {},
+            'original': {
+                'type': mime_type  # Required field
+            },
             'content': {
                 'name': file_name,
                 'url': file_url,
@@ -445,13 +448,14 @@ def process_new_contact(form_data, geolocation, ip_address):
     # set_crisp_conversation_state(session_id, 'unresolved')
     logger.warning("Skipping conversation state update (API permission not available)")
     
-    # Assign conversation to agent based on country (matching Make blueprint)
-    agent_id, distributor_email = get_agent_for_country(country)
+    # Assign conversation to agent based on country ISO code from IP geolocation (matching Make blueprint)
+    country_code = geolocation.get('country_code', '')
+    agent_id, distributor_email = get_agent_for_country(country_code)
     if agent_id:
         assign_conversation_to_agent(session_id, agent_id)
-        logger.info(f"Auto-assigned to agent based on country {country}: {distributor_email}")
+        logger.info(f"Auto-assigned to agent based on country {country_code}: {distributor_email}")
     else:
-        logger.info(f"No agent assignment for country: {country}")
+        logger.info(f"No agent assignment for country: {country_code}")
     
     # Send the form message to the conversation (try with fallback methods)
     if message:
@@ -554,13 +558,14 @@ def process_existing_contact(form_data, geolocation, existing_profiles, ip_addre
     # set_crisp_conversation_state(session_id, 'unresolved')
     logger.warning("Skipping conversation state update (API permission not available)")
     
-    # Assign conversation to agent based on country (matching Make blueprint)
-    agent_id, distributor_email = get_agent_for_country(country)
+    # Assign conversation to agent based on country ISO code from IP geolocation (matching Make blueprint)
+    country_code = geolocation.get('country_code', '')
+    agent_id, distributor_email = get_agent_for_country(country_code)
     if agent_id:
         assign_conversation_to_agent(session_id, agent_id)
-        logger.info(f"Auto-assigned to agent based on country {country}: {distributor_email}")
+        logger.info(f"Auto-assigned to agent based on country {country_code}: {distributor_email}")
     else:
-        logger.info(f"No agent assignment for country: {country}")
+        logger.info(f"No agent assignment for country: {country_code}")
     
     # Send the form message to the conversation (try with fallback methods)
     if message:
