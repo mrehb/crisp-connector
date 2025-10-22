@@ -309,17 +309,18 @@ def send_crisp_file_message(session_id, file_url, file_name="Uploaded File"):
     Matching Make blueprint: extracts extension after the dot
     """
     try:
-        # Extract file extension from filename (matching Make blueprint approach)
-        # Get the last part after '/' (filename), then get extension after last '.'
-        filename = file_url.split('/')[-1].split('?')[0]  # Remove query params
-        file_ext = filename.split('.')[-1].lower() if '.' in filename else ''
+        # Extract last 4 characters from URL EXACTLY matching Make blueprint
+        # Make does: substring(url; length(url)-4; 4) = last 4 chars including dot
+        # Example: "...file.png" → last 4 chars = ".png"
+        # Result: "image/.png" (with the dot!)
+        last_4_chars = file_url[-4:] if len(file_url) >= 4 else file_url
         
-        logger.info(f"Detected file extension: {file_ext} from filename: {filename}")
+        logger.info(f"Last 4 chars of URL: {last_4_chars} from URL: {file_url}")
         
         url = f'{CRISP_API_BASE}/website/{CRISP_WEBSITE_ID}/conversation/{session_id}/message'
         
         # Send as file message from user via email (matching Make blueprint EXACTLY)
-        # Make blueprint uses: original = {} (empty), content.type = "image/{last 4 chars}"
+        # Make: type = "image/{last 4 chars}" → "image/.png"
         payload = {
             'type': 'file',
             'from': 'user',
@@ -329,7 +330,7 @@ def send_crisp_file_message(session_id, file_url, file_name="Uploaded File"):
             'content': {
                 'name': file_name,
                 'url': file_url,
-                'type': f'image/{file_ext}'  # "image/png", "image/jpg", etc
+                'type': f'image/{last_4_chars}'  # "image/.png", "image/.jpg", etc
             }
         }
         
