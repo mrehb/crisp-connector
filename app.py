@@ -13,6 +13,7 @@ This script:
 
 import os
 import json
+import csv
 import requests
 from flask import Flask, request, jsonify
 from datetime import datetime
@@ -31,23 +32,23 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Load country routing data
+# Load country routing data from CSV
 COUNTRY_ROUTING = {}
 try:
-    country_routing_file = os.path.join(os.path.dirname(__file__), 'make-2025-10-22.json')
+    country_routing_file = os.path.join(os.path.dirname(__file__), 'country_routing.csv')
     with open(country_routing_file, 'r') as f:
-        routing_data = json.load(f)
-        # Build a dictionary with country code as key
-        for entry in routing_data:
-            country_code = entry.get('edit-disabled')
-            agent_id = entry.get('i-in-place-edit (2)')
-            distributor_email = entry.get('i-in-place-edit (4)')
-            if country_code and country_code != 'Empty':
+        reader = csv.DictReader(f)
+        for row in reader:
+            country_code = row.get('country_code', '').strip()
+            agent_id = row.get('agent_id', '').strip()
+            distributor_email = row.get('distributor_email', '').strip()
+            
+            if country_code:
                 COUNTRY_ROUTING[country_code] = {
-                    'agent_id': agent_id,
-                    'distributor_email': distributor_email
+                    'agent_id': agent_id if agent_id else None,
+                    'distributor_email': distributor_email if distributor_email else None
                 }
-        logger.info(f"Loaded routing data for {len(COUNTRY_ROUTING)} countries")
+        logger.info(f"Loaded routing data for {len(COUNTRY_ROUTING)} countries from CSV")
 except Exception as e:
     logger.error(f"Error loading country routing data: {e}")
     logger.warning("Continuing without country routing - conversations will not be auto-assigned")
@@ -58,8 +59,15 @@ CRISP_API_IDENTIFIER = os.getenv('CRISP_API_IDENTIFIER', 'your-api-identifier')
 CRISP_API_KEY = os.getenv('CRISP_API_KEY', 'your-api-key')
 IP2LOCATION_API_KEY = os.getenv('IP2LOCATION_API_KEY', 'your-ip2location-key')
 
+# Mailgun Configuration
+MAILGUN_API_KEY = os.getenv('MAILGUN_API_KEY', 'your-mailgun-api-key')
+MAILGUN_DOMAIN = os.getenv('MAILGUN_DOMAIN', 'your-mailgun-domain.com')
+MAILGUN_FROM_EMAIL = os.getenv('MAILGUN_FROM_EMAIL', 'support@your-mailgun-domain.com')
+MAILGUN_FROM_NAME = os.getenv('MAILGUN_FROM_NAME', 'BigMax Golf Support')
+
 # API Base URLs
 CRISP_API_BASE = 'https://api.crisp.chat/v1'
+MAILGUN_API_BASE = f'https://api.mailgun.net/v3/{MAILGUN_DOMAIN}'
 
 # Crisp API Authentication
 CRISP_AUTH = (CRISP_API_IDENTIFIER, CRISP_API_KEY)
@@ -224,13 +232,163 @@ def get_agent_for_country(country_code):
         agent_id = routing_info.get('agent_id')
         distributor_email = routing_info.get('distributor_email')
         
-        # Only return if agent_id is valid (not the default "empty" ID)
-        if agent_id and agent_id != 'cd6d4ce1-0e0c-4bf9-afdc-4558d536332e':
-            logger.info(f"Found agent for country {country_code}: {agent_id} ({distributor_email})")
-            return agent_id, distributor_email
+        logger.info(f"Routing for {country_code}: agent_id={agent_id}, distributor={distributor_email}")
+        return agent_id, distributor_email
     
-    logger.warning(f"No agent mapping found for country: {country_code}")
+    logger.warning(f"No routing found for country: {country_code}")
     return None, None
+
+
+def send_email_via_mailgun(to_email, cc_email, subject, body_text, body_html=None, session_id=None):
+    """
+    Send email via Mailgun with proper Reply-To for threading
+    
+    Args:
+        to_email: Primary recipient (distributor)
+        cc_email: CC recipient (customer)
+        subject: Email subject
+        body_text: Plain text body
+        body_html: HTML body (optional)
+        session_id: Crisp session ID for reply tracking
+    
+    Returns:
+        bool: True if sent successfully
+    """
+    try:
+        # Create Reply-To address with session ID for tracking
+        reply_to = f'conversation+{session_id}@{MAILGUN_DOMAIN}' if session_id else MAILGUN_FROM_EMAIL
+        
+        # Prepare email data
+        data = {
+            'from': f'{MAILGUN_FROM_NAME} <{MAILGUN_FROM_EMAIL}>',
+            'to': to_email,
+            'cc': cc_email,
+            'subject': subject,
+            'text': body_text,
+            'h:Reply-To': reply_to,
+            'h:X-Crisp-Session-ID': session_id if session_id else '',
+            'o:tag': ['jotform-integration', 'distributor-forwarding']
+        }
+        
+        # Add HTML version if provided
+        if body_html:
+            data['html'] = body_html
+        
+        # Send via Mailgun API
+        response = requests.post(
+            f'{MAILGUN_API_BASE}/messages',
+            auth=('api', MAILGUN_API_KEY),
+            data=data,
+            timeout=10
+        )
+        
+        response.raise_for_status()
+        result = response.json()
+        
+        logger.info(f"Email sent successfully via Mailgun - ID: {result.get('id')}")
+        logger.info(f"  To: {to_email}, CC: {cc_email}, Session: {session_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error sending email via Mailgun: {e}")
+        if 'response' in locals():
+            logger.error(f"Response: {response.text}")
+        return False
+
+
+def create_email_body(customer_name, customer_email, message, country, city, geolocation):
+    """
+    Create formatted email body for distributor
+    """
+    text_body = f"""New Customer Inquiry
+
+Customer Information:
+- Name: {customer_name}
+- Email: {customer_email}
+- Location: {city}, {country}
+- Country Code: {geolocation.get('country_code', 'N/A')}
+
+Message:
+{message}
+
+---
+IMPORTANT: 
+- Please reply to this email to respond to the customer
+- Your response will be sent to: {customer_email}
+- The customer is CC'd on this email and will see your reply
+- All conversation will be visible in Crisp dashboard
+
+This is an automated message from the JotForm integration.
+"""
+    
+    html_body = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+        .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+        .header {{ background: #0066cc; color: white; padding: 15px; border-radius: 5px 5px 0 0; }}
+        .content {{ background: #f9f9f9; padding: 20px; border: 1px solid #ddd; }}
+        .message-box {{ background: white; padding: 15px; margin: 15px 0; border-left: 4px solid #0066cc; }}
+        .info-table {{ width: 100%; margin: 15px 0; }}
+        .info-table td {{ padding: 8px; border-bottom: 1px solid #eee; }}
+        .info-table td:first-child {{ font-weight: bold; width: 30%; }}
+        .footer {{ background: #f0f0f0; padding: 15px; text-align: center; font-size: 12px; color: #666; border-radius: 0 0 5px 5px; }}
+        .important {{ background: #fff3cd; border: 1px solid #ffc107; padding: 15px; margin: 15px 0; border-radius: 5px; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2 style="margin: 0;">🆕 New Customer Inquiry</h2>
+        </div>
+        <div class="content">
+            <h3>Customer Information</h3>
+            <table class="info-table">
+                <tr>
+                    <td>Name:</td>
+                    <td>{customer_name}</td>
+                </tr>
+                <tr>
+                    <td>Email:</td>
+                    <td><a href="mailto:{customer_email}">{customer_email}</a></td>
+                </tr>
+                <tr>
+                    <td>Location:</td>
+                    <td>{city}, {country}</td>
+                </tr>
+                <tr>
+                    <td>Country Code:</td>
+                    <td>{geolocation.get('country_code', 'N/A')}</td>
+                </tr>
+            </table>
+            
+            <h3>Customer Message</h3>
+            <div class="message-box">
+                {message.replace(chr(10), '<br>')}
+            </div>
+            
+            <div class="important">
+                <strong>⚠️ IMPORTANT:</strong>
+                <ul style="margin: 10px 0;">
+                    <li>Please <strong>reply to this email</strong> to respond to the customer</li>
+                    <li>Your response will be sent to: <strong>{customer_email}</strong></li>
+                    <li>The customer is CC'd on this email and will see your reply</li>
+                    <li>All conversation will be visible in Crisp dashboard</li>
+                </ul>
+            </div>
+        </div>
+        <div class="footer">
+            This is an automated message from the JotForm integration.<br>
+            Powered by BigMax Golf Support System
+        </div>
+    </div>
+</body>
+</html>
+"""
+    
+    return text_body, html_body
 
 
 def update_crisp_conversation_participants(session_id, email, person_data):
@@ -370,6 +528,172 @@ def update_crisp_contact(people_id, email, person_data):
     except Exception as e:
         logger.error(f"Error updating Crisp contact: {e}")
         return False
+
+
+def process_with_email_forwarding(form_data, geolocation, ip_address):
+    """
+    NEW APPROACH: Process contact with email forwarding through Mailgun
+    
+    Flow:
+    1. Create conversation in Crisp (for monitoring/tracking)
+    2. Determine routing: agent assignment vs distributor email
+    3. Send email via Mailgun to distributor with customer CC'd
+    4. Store all info in Crisp for monitoring
+    
+    This ensures 100% reliable three-way communication
+    """
+    logger.info("=" * 80)
+    logger.info("Processing contact with EMAIL FORWARDING approach")
+    logger.info("=" * 80)
+    
+    # Extract form data
+    name_obj = form_data.get('q3_name', {})
+    if isinstance(name_obj, dict):
+        first_name = name_obj.get('first', '')
+        last_name = name_obj.get('last', '')
+        customer_name = f"{first_name} {last_name}".strip()
+    else:
+        customer_name = str(name_obj) if name_obj else 'Unknown'
+    
+    customer_email = form_data.get('q6_email', '')
+    message = form_data.get('q7_howCan', '')
+    country_info = form_data.get('q5_country', {})
+    country = country_info.get('country', '') if isinstance(country_info, dict) else ''
+    city = country_info.get('city', '') if isinstance(country_info, dict) else ''
+    
+    logger.info(f"Customer: {customer_name} ({customer_email})")
+    logger.info(f"Location: {city}, {country}")
+    
+    # Get routing info based on IP geolocation country code
+    country_code = geolocation.get('country_code', '')
+    agent_id, distributor_email = get_agent_for_country(country_code)
+    
+    # Determine routing strategy
+    use_agent = agent_id is not None
+    use_distributor_email = distributor_email is not None
+    
+    logger.info(f"Routing strategy: agent={'YES' if use_agent else 'NO'}, distributor_email={'YES' if use_distributor_email else 'NO'}")
+    
+    # If no routing available, fallback to direct Crisp only
+    if not use_agent and not use_distributor_email:
+        logger.warning(f"No routing available for {country_code}, using fallback to Crisp only")
+        return process_new_contact_fallback(form_data, geolocation, ip_address)
+    
+    # Create conversation in Crisp for monitoring
+    session_id = create_crisp_conversation(CRISP_WEBSITE_ID)
+    if not session_id:
+        logger.error("Failed to create Crisp conversation")
+        return False
+    
+    logger.info(f"✅ Created Crisp conversation: {session_id}")
+    
+    # Update conversation metadata
+    meta_data = {
+        'email': customer_email,
+        'nickname': customer_name,
+        'subject': f'Customer Inquiry - {country_code}',
+        'ip': ip_address,
+        'segments': [
+            'EmailForwarding',
+            'DistributorHandled',
+            f'Country: {country}'
+        ],
+        'device': {
+            'geolocation': {
+                'country': country_code,
+                'region': geolocation.get('region_name', ''),
+                'city': geolocation.get('city_name', ''),
+                'coordinates': {
+                    'latitude': geolocation.get('latitude', 0),
+                    'longitude': geolocation.get('longitude', 0)
+                }
+            }
+        },
+        'data': {
+            'customer_email': customer_email,
+            'customer_name': customer_name,
+            'distributor_email': distributor_email if distributor_email else 'none',
+            'routing_method': 'email_forwarding',
+            'form_message': message,
+            'form_country': country,
+            'form_city': city
+        }
+    }
+    update_crisp_conversation_meta(session_id, meta_data)
+    logger.info(f"✅ Updated Crisp metadata")
+    
+    # Assign to agent if available
+    if use_agent:
+        assign_conversation_to_agent(session_id, agent_id)
+        logger.info(f"✅ Assigned to agent: {agent_id}")
+    
+    # Store message in Crisp for monitoring
+    crisp_note = f"""📧 Customer inquiry forwarded via email
+
+Customer: {customer_name} ({customer_email})
+Distributor: {distributor_email if distributor_email else 'N/A'}
+Location: {city}, {country} ({country_code})
+
+Original Message:
+{message}
+
+---
+Note: Communication is being handled via direct email between customer and distributor.
+All replies will be forwarded through our email system.
+Conversation ID: {session_id}
+"""
+    send_crisp_message(session_id, crisp_note)
+    logger.info(f"✅ Posted note to Crisp")
+    
+    # Send email via Mailgun if distributor email exists
+    if use_distributor_email:
+        text_body, html_body = create_email_body(
+            customer_name, 
+            customer_email, 
+            message, 
+            country, 
+            city, 
+            geolocation
+        )
+        
+        subject = f"New Customer Inquiry - {customer_name} ({country_code})"
+        
+        email_sent = send_email_via_mailgun(
+            to_email=distributor_email,
+            cc_email=customer_email,
+            subject=subject,
+            body_text=text_body,
+            body_html=html_body,
+            session_id=session_id
+        )
+        
+        if email_sent:
+            logger.info(f"✅ Email sent via Mailgun to distributor")
+            logger.info(f"   To: {distributor_email}")
+            logger.info(f"   CC: {customer_email}")
+        else:
+            logger.error(f"❌ Failed to send email via Mailgun")
+            # Still return True as Crisp conversation was created
+    else:
+        logger.info(f"ℹ️  No distributor email, conversation remains in Crisp only")
+    
+    logger.info("=" * 80)
+    logger.info(f"✅ Successfully processed with email forwarding")
+    logger.info(f"   Crisp Session: {session_id}")
+    logger.info(f"   Customer: {customer_email}")
+    logger.info(f"   Distributor: {distributor_email if distributor_email else 'N/A'}")
+    logger.info("=" * 80)
+    
+    return True
+
+
+def process_new_contact_fallback(form_data, geolocation, ip_address):
+    """
+    Fallback: Process contact using original Crisp-only method
+    Used when no agent or distributor email is available
+    """
+    logger.info("Using fallback: Crisp-only processing (no email forwarding)")
+    return process_new_contact(form_data, geolocation, ip_address)
 
 
 def process_new_contact(form_data, geolocation, ip_address):
@@ -657,11 +981,9 @@ def jotform_webhook():
         existing_profiles = []
         logger.warning("Skipping people profiles lookup (API endpoint not available)")
         
-        # Process the contact based on whether they exist or not
-        if existing_profiles:
-            success = process_existing_contact(form_data, geolocation, existing_profiles, ip_address)
-        else:
-            success = process_new_contact(form_data, geolocation, ip_address)
+        # NEW: Use email forwarding approach for reliable three-way communication
+        logger.info("🔄 Using EMAIL FORWARDING approach")
+        success = process_with_email_forwarding(form_data, geolocation, ip_address)
         
         if success:
             return jsonify({'status': 'success', 'message': 'Form processed successfully'}), 200
@@ -748,6 +1070,134 @@ def webhook_debug():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/webhook/mailgun-incoming', methods=['POST'])
+def mailgun_incoming_webhook():
+    """
+    Webhook to receive incoming email replies from Mailgun
+    
+    When distributor or customer replies to email, this webhook:
+    1. Extracts the session ID from headers/subject
+    2. Posts the reply to Crisp conversation
+    3. Forwards to the other party (customer or distributor)
+    
+    Setup in Mailgun:
+    - Routes: Create route for conversation+*@your-domain.com
+    - Forward to: https://your-domain.com/webhook/mailgun-incoming
+    """
+    try:
+        logger.info("=" * 80)
+        logger.info("INCOMING EMAIL from Mailgun")
+        logger.info("=" * 80)
+        
+        # Get email data from Mailgun
+        sender = request.form.get('sender', '')
+        recipient = request.form.get('recipient', '')
+        subject = request.form.get('subject', '')
+        body_plain = request.form.get('body-plain', '')
+        body_html = request.form.get('body-html', '')
+        
+        # Extract session ID from custom header or recipient
+        session_id = request.form.get('X-Crisp-Session-ID', '')
+        
+        # If not in header, try to extract from recipient (conversation+{session_id}@domain.com)
+        if not session_id and 'conversation+' in recipient:
+            try:
+                session_id = recipient.split('conversation+')[1].split('@')[0]
+            except:
+                pass
+        
+        logger.info(f"From: {sender}")
+        logger.info(f"To: {recipient}")
+        logger.info(f"Subject: {subject}")
+        logger.info(f"Session ID: {session_id}")
+        
+        if not session_id:
+            logger.error("Could not extract session ID from incoming email")
+            return jsonify({'error': 'Session ID not found'}), 400
+        
+        # Get conversation metadata to determine who should receive this
+        meta = get_conversation_meta(session_id)
+        customer_email = meta.get('data', {}).get('customer_email', '')
+        distributor_email = meta.get('data', {}).get('distributor_email', '')
+        
+        logger.info(f"Conversation participants: customer={customer_email}, distributor={distributor_email}")
+        
+        # Post message to Crisp for monitoring
+        crisp_message = f"""📧 Email Reply Received
+
+From: {sender}
+Subject: {subject}
+
+{body_plain}
+
+---
+This reply was automatically captured from email and posted to Crisp.
+"""
+        send_crisp_message(session_id, crisp_message)
+        logger.info("✅ Posted email reply to Crisp")
+        
+        # Determine who sent this and who should receive it
+        sender_lower = sender.lower()
+        customer_lower = customer_email.lower() if customer_email else ''
+        distributor_lower = distributor_email.lower() if distributor_email else ''
+        
+        forward_to = None
+        reply_from = None
+        
+        if customer_lower in sender_lower:
+            # Customer replied -> forward to distributor
+            forward_to = distributor_email
+            reply_from = "customer"
+            logger.info(f"Reply from CUSTOMER -> forwarding to distributor: {forward_to}")
+        elif distributor_lower in sender_lower:
+            # Distributor replied -> forward to customer
+            forward_to = customer_email
+            reply_from = "distributor"
+            logger.info(f"Reply from DISTRIBUTOR -> forwarding to customer: {forward_to}")
+        else:
+            logger.warning(f"Reply from unknown sender: {sender}")
+            # Still post to Crisp, but don't forward
+            return jsonify({'status': 'success', 'message': 'Posted to Crisp, sender not recognized'}), 200
+        
+        # Forward the reply to the other party
+        if forward_to:
+            # Create clean reply (remove quoted text if needed)
+            clean_body = body_plain
+            
+            forward_success = send_email_via_mailgun(
+                to_email=forward_to,
+                cc_email='',  # No CC on replies to avoid loops
+                subject=f"Re: {subject}",
+                body_text=clean_body,
+                body_html=body_html,
+                session_id=session_id
+            )
+            
+            if forward_success:
+                logger.info(f"✅ Forwarded reply to: {forward_to}")
+            else:
+                logger.error(f"❌ Failed to forward reply to: {forward_to}")
+        
+        logger.info("=" * 80)
+        return jsonify({'status': 'success', 'message': 'Email processed'}), 200
+        
+    except Exception as e:
+        logger.error(f"Error processing incoming email: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+def get_conversation_meta(session_id):
+    """Get conversation metadata from Crisp"""
+    try:
+        url = f'{CRISP_API_BASE}/website/{CRISP_WEBSITE_ID}/conversation/{session_id}/meta'
+        response = requests.get(url, auth=CRISP_AUTH, headers=CRISP_HEADERS, timeout=10)
+        response.raise_for_status()
+        return response.json().get('data', {})
+    except Exception as e:
+        logger.error(f"Error getting conversation meta: {e}")
+        return {}
+
+
 @app.route('/', methods=['GET'])
 def index():
     """
@@ -755,12 +1205,21 @@ def index():
     """
     return jsonify({
         'service': 'JotForm to Crisp Integration',
-        'version': '1.0.0',
+        'version': '2.0.0 - Email Forwarding',
         'endpoints': {
             'webhook': '/webhook/jotform',
             'webhook_debug': '/webhook/debug',
+            'mailgun_incoming': '/webhook/mailgun-incoming',
             'health': '/health'
-        }
+        },
+        'features': [
+            'JotForm webhook processing',
+            'IP geolocation lookup',
+            'Crisp conversation creation',
+            'Email forwarding via Mailgun',
+            'Automatic distributor routing',
+            'Three-way email threading'
+        ]
     }), 200
 
 
