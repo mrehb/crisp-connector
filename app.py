@@ -1214,6 +1214,11 @@ def mailgun_incoming_webhook():
             logger.info(f"   Available metadata keys: {list(meta.keys())}")
             logger.info(f"   Available data keys: {list(meta.get('data', {}).keys())}")
         
+        # Define variables for sender matching (needed for Crisp message posting)
+        sender_lower = sender.lower()
+        customer_lower = customer_email.lower() if customer_email else ''
+        distributor_lower = distributor_email.lower() if distributor_email else ''
+        
         # Post message to Crisp - just the message content, not full email
         # Determine sender name for Crisp message
         if customer_lower and customer_lower in sender_lower:
@@ -1246,11 +1251,7 @@ def mailgun_incoming_webhook():
         send_crisp_message(session_id, crisp_message)
         logger.info("✅ Posted email reply to Crisp")
         
-        # Determine who sent this and who should receive it
-        sender_lower = sender.lower()
-        customer_lower = customer_email.lower() if customer_email else ''
-        distributor_lower = distributor_email.lower() if distributor_email else ''
-        
+        # Determine who sent this and who should receive it (variables already defined above)
         logger.info(f"🔍 Sender matching:")
         logger.info(f"   Sender: {sender} (lower: {sender_lower})")
         logger.info(f"   Customer: {customer_email} (lower: {customer_lower})")
