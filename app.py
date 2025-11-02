@@ -246,7 +246,7 @@ def get_agent_for_country(country_code):
     return None, None
 
 
-def send_email_via_mailgun(to_email, cc_email, subject, body_text, body_html=None, session_id=None):
+def send_email_via_mailgun(to_email, cc_email, subject, body_text, body_html=None, session_id=None, attachments=None):
     """
     Send email via Mailgun with proper Reply-To for threading
     
@@ -257,6 +257,7 @@ def send_email_via_mailgun(to_email, cc_email, subject, body_text, body_html=Non
         body_text: Plain text body
         body_html: HTML body (optional)
         session_id: Crisp session ID for reply tracking
+        attachments: List of attachment dicts with 'filename', 'content_type', 'data' keys
     
     Returns:
         bool: True if sent successfully
@@ -301,7 +302,15 @@ def send_email_via_mailgun(to_email, cc_email, subject, body_text, body_html=Non
         logger.info(f"     To: {data.get('to')}")
         logger.info(f"     CC: {data.get('cc', '(none)')}")
         logger.info(f"     Subject: {data.get('subject')}")
+        logger.info(f"     Attachments: {len(attachments) if attachments else 0}")
         logger.info(f"     API URL: {MAILGUN_API_BASE}/messages")
+        
+        # Prepare files for attachments
+        files = []
+        if attachments:
+            for att in attachments:
+                files.append(('attachment', (att['filename'], att['data'], att['content_type'])))
+                logger.info(f"       Attaching: {att['filename']} ({att['content_type']})")
         
         # Send via Mailgun API
         logger.info(f"   Sending request to Mailgun API...")
@@ -309,7 +318,8 @@ def send_email_via_mailgun(to_email, cc_email, subject, body_text, body_html=Non
             f'{MAILGUN_API_BASE}/messages',
             auth=('api', MAILGUN_API_KEY),
             data=data,
-            timeout=10
+            files=files if files else None,
+            timeout=30  # Longer timeout for attachments
         )
         logger.info(f"   Mailgun API response status: {response.status_code}")
         
@@ -1178,6 +1188,28 @@ def mailgun_incoming_webhook():
         body_plain = request.form.get('body-plain', '')
         body_html = request.form.get('body-html', '')
         
+        # Get attachments from Mailgun
+        attachments = []
+        attachment_count = int(request.form.get('attachment-count', 0))
+        
+        logger.info(f"Attachment count: {attachment_count}")
+        
+        if attachment_count > 0:
+            for i in range(1, attachment_count + 1):
+                attachment_file = request.files.get(f'attachment-{i}')
+                if attachment_file:
+                    # Read attachment data
+                    attachment_data = {
+                        'filename': attachment_file.filename,
+                        'content_type': attachment_file.content_type,
+                        'data': attachment_file.read()
+                    }
+                    attachments.append(attachment_data)
+                    logger.info(f"   Attachment {i}: {attachment_file.filename} ({attachment_file.content_type})")
+                    
+                    # Reset file pointer for potential re-reading
+                    attachment_file.seek(0)
+        
         # Get Mailgun message signature for deduplication (most reliable)
         mailgun_signature = request.form.get('signature', '')
         mailgun_timestamp = request.form.get('timestamp', '')
@@ -1311,10 +1343,22 @@ def mailgun_incoming_webhook():
             if marker in clean_message:
                 clean_message = clean_message.split(marker)[0]
         
-        # Post clean message to Crisp
+        # Post clean message to Crisp with attachments
         crisp_message = f"💬 {sender_label}: {clean_message.strip()}"
+        
+        # Add attachment information to Crisp message
+        if attachments:
+            crisp_message += f"\n\n📎 {len(attachments)} attachment(s):"
+            for att in attachments:
+                # Check if it's an image
+                is_image = att['content_type'].startswith('image/')
+                icon = "🖼️" if is_image else "📎"
+                crisp_message += f"\n{icon} {att['filename']} ({att['content_type']})"
+        
         send_crisp_message(session_id, crisp_message)
         logger.info("✅ Posted email reply to Crisp")
+        if attachments:
+            logger.info(f"   Included {len(attachments)} attachment(s) in message")
         
         # Determine who sent this and who should receive it (variables already defined above)
         logger.info(f"🔍 Sender matching:")
@@ -1369,7 +1413,8 @@ def mailgun_incoming_webhook():
                 subject=f"Re: {subject}",
                 body_text=clean_body,
                 body_html=body_html,
-                session_id=session_id
+                session_id=session_id,
+                attachments=attachments  # Forward attachments (images, files, etc.)
             )
             
             if forward_success:
