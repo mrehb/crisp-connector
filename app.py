@@ -39,9 +39,10 @@ try:
     with open(country_routing_file, 'r') as f:
         reader = csv.DictReader(f)
         for row in reader:
-            country_code = row.get('country_code', '').strip()
-            agent_id = row.get('agent_id', '').strip()
-            distributor_email = row.get('distributor_email', '').strip()
+            # Handle None values - use empty string if None
+            country_code = (row.get('country_code') or '').strip()
+            agent_id = (row.get('agent_id') or '').strip()
+            distributor_email = (row.get('distributor_email') or '').strip()
             
             if country_code:
                 COUNTRY_ROUTING[country_code] = {
@@ -255,17 +256,20 @@ def send_email_via_mailgun(to_email, cc_email, subject, body_text, body_html=Non
         bool: True if sent successfully
     """
     try:
-        # Create Reply-To address with session ID for tracking
-        reply_to = f'conversation+{session_id}@{MAILGUN_DOMAIN}' if session_id else MAILGUN_FROM_EMAIL
+        # Create conversation email address with session ID for tracking
+        # Use this as the From address so ALL replies go to this address
+        # (Some email clients ignore Reply-To and reply to From instead)
+        conversation_email = f'conversation+{session_id}@{MAILGUN_DOMAIN}' if session_id else MAILGUN_FROM_EMAIL
+        from_display = f'{MAILGUN_FROM_NAME} <{conversation_email}>'
         
         # Prepare email data
         data = {
-            'from': f'{MAILGUN_FROM_NAME} <{MAILGUN_FROM_EMAIL}>',
+            'from': from_display,
             'to': to_email,
             'cc': cc_email,
             'subject': subject,
             'text': body_text,
-            'h:Reply-To': reply_to,
+            'h:Reply-To': conversation_email,  # Also set Reply-To for clients that use it
             'h:X-Crisp-Session-ID': session_id if session_id else '',
             'o:tag': ['jotform-integration', 'distributor-forwarding']
         }
@@ -566,18 +570,33 @@ def process_with_email_forwarding(form_data, geolocation, ip_address):
     
     # Get routing info based on IP geolocation country code
     country_code = geolocation.get('country_code', '')
-    agent_id, distributor_email = get_agent_for_country(country_code)
+    agent_id_from_csv, distributor_email = get_agent_for_country(country_code)
     
-    # Determine routing strategy
-    use_agent = agent_id is not None
+    # NEW LOGIC: Always assign to an agent based on priority:
+    # 1. Use agent_id from CSV if it exists
+    # 2. If no agent_id but distributor_email exists -> Golf Tech Helpdesk
+    # 3. If no agent_id and no distributor_email -> Golf Tech Office
+    GOLF_TECH_HELPDESK = '1768be3b-bc0d-44cd-ae56-2cf795045b10'
+    GOLF_TECH_OFFICE = 'cd6d4ce1-0e0c-4bf9-afdc-4558d536332e'
+    
+    if agent_id_from_csv:
+        # Priority 1: Use agent from CSV
+        agent_id = agent_id_from_csv
+        agent_source = 'CSV'
+    elif distributor_email:
+        # Priority 2: Distributor email exists -> Golf Tech Helpdesk
+        agent_id = GOLF_TECH_HELPDESK
+        agent_source = 'Golf Tech Helpdesk (has distributor)'
+    else:
+        # Priority 3: No distributor email -> Golf Tech Office
+        agent_id = GOLF_TECH_OFFICE
+        agent_source = 'Golf Tech Office (no distributor)'
+    
     use_distributor_email = distributor_email is not None
     
-    logger.info(f"Routing strategy: agent={'YES' if use_agent else 'NO'}, distributor_email={'YES' if use_distributor_email else 'NO'}")
-    
-    # If no routing available, fallback to direct Crisp only
-    if not use_agent and not use_distributor_email:
-        logger.warning(f"No routing available for {country_code}, using fallback to Crisp only")
-        return process_new_contact_fallback(form_data, geolocation, ip_address)
+    logger.info(f"Agent assignment: {agent_id} ({agent_source})")
+    logger.info(f"Distributor email: {'YES' if use_distributor_email else 'NO'}")
+    logger.info(f"Routing strategy: distributor_email={'YES' if use_distributor_email else 'NO'}")
     
     # Create conversation in Crisp for monitoring
     session_id = create_crisp_conversation(CRISP_WEBSITE_ID)
@@ -613,6 +632,8 @@ def process_with_email_forwarding(form_data, geolocation, ip_address):
             'customer_email': customer_email,
             'customer_name': customer_name,
             'distributor_email': distributor_email if distributor_email else 'none',
+            'agent_id': agent_id,
+            'agent_source': agent_source,
             'routing_method': 'email_forwarding',
             'form_message': message,
             'form_country': country,
@@ -622,10 +643,9 @@ def process_with_email_forwarding(form_data, geolocation, ip_address):
     update_crisp_conversation_meta(session_id, meta_data)
     logger.info(f"✅ Updated Crisp metadata")
     
-    # Assign to agent if available
-    if use_agent:
-        assign_conversation_to_agent(session_id, agent_id)
-        logger.info(f"✅ Assigned to agent: {agent_id}")
+    # ALWAYS assign to agent (we now always have an agent_id based on priority logic)
+    assign_conversation_to_agent(session_id, agent_id)
+    logger.info(f"✅ Assigned to agent: {agent_id} ({agent_source})")
     
     # Store message in Crisp for monitoring
     crisp_note = f"""📧 Customer inquiry forwarded via email
@@ -633,6 +653,7 @@ def process_with_email_forwarding(form_data, geolocation, ip_address):
 Customer: {customer_name} ({customer_email})
 Distributor: {distributor_email if distributor_email else 'N/A'}
 Location: {city}, {country} ({country_code})
+Assigned Agent: {agent_source}
 
 Original Message:
 {message}
@@ -965,8 +986,23 @@ def jotform_webhook():
         # Get IP address for geolocation
         ip_address = data.get('ip', request.remote_addr)
         
-        # Lookup IP geolocation
-        geolocation = get_ip_geolocation(ip_address)
+        # TEST MODE: Allow overriding country code for testing
+        test_country_code = data.get('test_country_code') or data.get('request', {}).get('test_country_code')
+        if test_country_code:
+            logger.info(f"🧪 TEST MODE: Overriding country code to {test_country_code}")
+            # Mock geolocation with test country code
+            geolocation = {
+                'city_name': 'Test City',
+                'region_name': 'Test Region',
+                'country_code': test_country_code.upper(),
+                'latitude': 0,
+                'longitude': 0,
+                'country_name': 'Test Country',
+                'zip_code': ''
+            }
+        else:
+            # Lookup IP geolocation
+            geolocation = get_ip_geolocation(ip_address)
         
         # Get email from form data
         email = form_data.get('q6_email', '')
