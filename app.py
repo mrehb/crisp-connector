@@ -1213,18 +1213,18 @@ def mailgun_incoming_webhook():
             return jsonify({'error': 'Session ID not found'}), 400
         
         # Create message signature for deduplication
-        # Priority: Use Mailgun signature + token + timestamp (most reliable)
-        # Fallback: Use message-id, or sender + session_id + subject + body hash
-        if mailgun_signature and mailgun_token and mailgun_timestamp:
-            # Best: Use Mailgun's own signature (unique per message)
+        # Use Message-ID (same for all duplicate calls from Mailgun routes)
+        # If multiple routes forward the same email, Message-ID will be identical
+        if message_id:
+            # Best: Use Message-ID header (same across duplicate Mailgun route calls)
+            message_signature = f"msgid:{message_id}"
+            logger.info(f"Using Message-ID for deduplication: {message_id}")
+        elif mailgun_signature and mailgun_token and mailgun_timestamp:
+            # Fallback: Use Mailgun's own signature (unique per message)
             message_signature = f"mg:{mailgun_signature}:{mailgun_token}:{mailgun_timestamp}"
             logger.info(f"Using Mailgun signature for deduplication")
-        elif message_id:
-            # Good: Use Message-ID header (unique per message)
-            message_signature = f"msgid:{message_id}"
-            logger.info(f"Using Message-ID for deduplication")
         else:
-            # Fallback: Use sender + session_id + subject + body hash
+            # Last resort: Use sender + session_id + subject + body hash
             body_hash = hashlib.md5(body_plain.encode()).hexdigest()[:16] if body_plain else ''
             message_signature = f"fallback:{sender}:{session_id}:{subject}:{body_hash}"
             logger.info(f"Using fallback signature for deduplication")
