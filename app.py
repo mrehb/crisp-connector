@@ -631,7 +631,7 @@ def process_with_email_forwarding(form_data, geolocation, ip_address):
         'data': {
             'customer_email': customer_email,
             'customer_name': customer_name,
-            'distributor_email': distributor_email if distributor_email else 'none',
+            'distributor_email': distributor_email if distributor_email else '',
             'agent_id': agent_id,
             'agent_source': agent_source,
             'routing_method': 'email_forwarding',
@@ -1156,7 +1156,23 @@ def mailgun_incoming_webhook():
         customer_email = meta.get('data', {}).get('customer_email', '')
         distributor_email = meta.get('data', {}).get('distributor_email', '')
         
+        # Handle 'none' string as empty (legacy)
+        if distributor_email == 'none':
+            distributor_email = ''
+        
         logger.info(f"Conversation participants: customer={customer_email}, distributor={distributor_email}")
+        
+        if not customer_email:
+            logger.error("⚠️ Customer email not found in metadata - cannot forward")
+            # Try to get from conversation email metadata as fallback
+            customer_email = meta.get('email', '')
+            if customer_email:
+                logger.info(f"   Using email from metadata.email: {customer_email}")
+        
+        if not customer_email and not distributor_email:
+            logger.error("⚠️ Neither customer_email nor distributor_email found in metadata")
+            logger.info(f"   Available metadata keys: {list(meta.keys())}")
+            logger.info(f"   Available data keys: {list(meta.get('data', {}).keys())}")
         
         # Post message to Crisp for monitoring
         crisp_message = f"""📧 Email Reply Received
@@ -1177,26 +1193,37 @@ This reply was automatically captured from email and posted to Crisp.
         customer_lower = customer_email.lower() if customer_email else ''
         distributor_lower = distributor_email.lower() if distributor_email else ''
         
+        logger.info(f"🔍 Sender matching:")
+        logger.info(f"   Sender: {sender} (lower: {sender_lower})")
+        logger.info(f"   Customer: {customer_email} (lower: {customer_lower})")
+        logger.info(f"   Distributor: {distributor_email} (lower: {distributor_lower})")
+        
         forward_to = None
         reply_from = None
         
-        if customer_lower in sender_lower:
+        if customer_lower and customer_lower in sender_lower:
             # Customer replied -> forward to distributor
             forward_to = distributor_email
             reply_from = "customer"
-            logger.info(f"Reply from CUSTOMER -> forwarding to distributor: {forward_to}")
-        elif distributor_lower in sender_lower:
+            logger.info(f"✅ Reply from CUSTOMER -> forwarding to distributor: {forward_to}")
+        elif distributor_lower and distributor_lower in sender_lower:
             # Distributor replied -> forward to customer
             forward_to = customer_email
             reply_from = "distributor"
-            logger.info(f"Reply from DISTRIBUTOR -> forwarding to customer: {forward_to}")
+            logger.info(f"✅ Reply from DISTRIBUTOR -> forwarding to customer: {forward_to}")
         else:
-            logger.warning(f"Reply from unknown sender: {sender}")
+            logger.warning(f"⚠️ Reply from unknown sender: {sender}")
+            logger.warning(f"   Customer match: {customer_lower in sender_lower if customer_lower else 'N/A (no customer_email)'}")
+            logger.warning(f"   Distributor match: {distributor_lower in sender_lower if distributor_lower else 'N/A (no distributor_email)'}")
             # Still post to Crisp, but don't forward
             return jsonify({'status': 'success', 'message': 'Posted to Crisp, sender not recognized'}), 200
         
         # Forward the reply to the other party
         if forward_to:
+            logger.info(f"📧 Forwarding email to: {forward_to}")
+            logger.info(f"   From: {sender}")
+            logger.info(f"   Subject: {subject}")
+            
             # Create clean reply (remove quoted text if needed)
             clean_body = body_plain
             
@@ -1210,9 +1237,12 @@ This reply was automatically captured from email and posted to Crisp.
             )
             
             if forward_success:
-                logger.info(f"✅ Forwarded reply to: {forward_to}")
+                logger.info(f"✅ Successfully forwarded reply to: {forward_to}")
             else:
                 logger.error(f"❌ Failed to forward reply to: {forward_to}")
+                logger.error(f"   Check Mailgun API logs for details")
+        else:
+            logger.warning(f"⚠️ forward_to is None - skipping email forwarding")
         
         logger.info("=" * 80)
         return jsonify({'status': 'success', 'message': 'Email processed'}), 200
