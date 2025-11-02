@@ -620,11 +620,13 @@ def process_with_email_forwarding(form_data, geolocation, ip_address):
         agent_id = GOLF_TECH_OFFICE
         agent_source = 'Golf Tech Office (no distributor)'
     
-    use_distributor_email = distributor_email is not None
+    # Check if we should send email (distributor email must be non-empty)
+    use_distributor_email = bool(distributor_email and distributor_email.strip())
     
     logger.info(f"Agent assignment: {agent_id} ({agent_source})")
-    logger.info(f"Distributor email: {'YES' if use_distributor_email else 'NO'}")
-    logger.info(f"Routing strategy: distributor_email={'YES' if use_distributor_email else 'NO'}")
+    logger.info(f"Distributor email: {distributor_email if distributor_email else 'NONE'}")
+    logger.info(f"Will send email: {'YES' if use_distributor_email else 'NO'}")
+    logger.info(f"Routing strategy: {'Email forwarding' if use_distributor_email else 'No email forwarding'}")
     
     # Create conversation in Crisp for monitoring
     session_id = create_crisp_conversation(CRISP_WEBSITE_ID)
@@ -695,6 +697,12 @@ Conversation ID: {session_id}
     logger.info(f"✅ Posted note to Crisp")
     
     # Send email via Mailgun if distributor email exists
+    logger.info(f"")
+    logger.info(f"=== EMAIL SENDING DECISION ===")
+    logger.info(f"use_distributor_email: {use_distributor_email}")
+    logger.info(f"distributor_email value: '{distributor_email}'")
+    logger.info(f"distributor_email type: {type(distributor_email)}")
+    
     if use_distributor_email:
         text_body, html_body = create_email_body(
             customer_name, 
@@ -722,8 +730,10 @@ Conversation ID: {session_id}
             logger.info(f"   CC: {customer_email}")
         else:
             logger.error(f"❌ Failed to send email via Mailgun")
-            # Still return True as Crisp conversation was created
+            logger.error(f"   Check Mailgun configuration and logs above")
     else:
+        logger.info(f"⚠️  Email sending SKIPPED because use_distributor_email={use_distributor_email}")
+        logger.info(f"   distributor_email: '{distributor_email}'")
         logger.info(f"ℹ️  No distributor email, conversation remains in Crisp only")
     
     logger.info("=" * 80)
