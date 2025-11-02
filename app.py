@@ -715,9 +715,11 @@ Conversation ID: {session_id}
         
         subject = f"New Customer Inquiry - {customer_name} ({country_code})"
         
+        # Send to distributor only (no CC to customer)
+        # Customer will only receive replies from distributor
         email_sent = send_email_via_mailgun(
             to_email=distributor_email,
-            cc_email=customer_email,
+            cc_email=None,  # No CC - only distributor receives initial email
             subject=subject,
             body_text=text_body,
             body_html=html_body,
@@ -727,7 +729,7 @@ Conversation ID: {session_id}
         if email_sent:
             logger.info(f"✅ Email sent via Mailgun to distributor")
             logger.info(f"   To: {distributor_email}")
-            logger.info(f"   CC: {customer_email}")
+            logger.info(f"   Customer will receive replies from distributor")
         else:
             logger.error(f"❌ Failed to send email via Mailgun")
             logger.error(f"   Check Mailgun configuration and logs above")
@@ -1212,17 +1214,35 @@ def mailgun_incoming_webhook():
             logger.info(f"   Available metadata keys: {list(meta.keys())}")
             logger.info(f"   Available data keys: {list(meta.get('data', {}).keys())}")
         
-        # Post message to Crisp for monitoring
-        crisp_message = f"""📧 Email Reply Received
-
-From: {sender}
-Subject: {subject}
-
-{body_plain}
-
----
-This reply was automatically captured from email and posted to Crisp.
-"""
+        # Post message to Crisp - just the message content, not full email
+        # Determine sender name for Crisp message
+        if customer_lower and customer_lower in sender_lower:
+            sender_label = "Customer"
+        elif distributor_lower and distributor_lower in sender_lower:
+            sender_label = "Distributor"
+        else:
+            sender_label = sender
+        
+        # Clean body - remove email signatures and quoted text
+        clean_message = body_plain
+        
+        # Remove common email signatures and quoted text markers
+        signature_markers = [
+            '\n---\n',
+            '\n-- \n',
+            '\n________________________________\n',
+            'From:',
+            'Sent from my',
+            'Get Outlook for',
+            'On ' # "On [date] ... wrote:"
+        ]
+        
+        for marker in signature_markers:
+            if marker in clean_message:
+                clean_message = clean_message.split(marker)[0]
+        
+        # Post clean message to Crisp
+        crisp_message = f"💬 {sender_label}: {clean_message.strip()}"
         send_crisp_message(session_id, crisp_message)
         logger.info("✅ Posted email reply to Crisp")
         
