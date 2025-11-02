@@ -19,9 +19,15 @@ from flask import Flask, request, jsonify
 from datetime import datetime
 import logging
 from dotenv import load_dotenv
+import hashlib
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Deduplication: Track processed email messages to prevent duplicates
+# Use message hash as key (sender + session_id + subject + body_hash)
+PROCESSED_MESSAGES = set()
+MAX_PROCESSED_SIZE = 1000  # Keep last 1000 processed messages
 
 # Configure logging
 logging.basicConfig(
@@ -1190,6 +1196,30 @@ def mailgun_incoming_webhook():
         if not session_id:
             logger.error("Could not extract session ID from incoming email")
             return jsonify({'error': 'Session ID not found'}), 400
+        
+        # Create message signature for deduplication
+        # Use sender + session_id + subject + body hash to detect duplicates
+        body_hash = hashlib.md5(body_plain.encode()).hexdigest()[:16] if body_plain else ''
+        message_signature = f"{sender}:{session_id}:{subject}:{body_hash}"
+        
+        # Check if we've already processed this message
+        if message_signature in PROCESSED_MESSAGES:
+            logger.warning(f"⚠️  Duplicate message detected - already processed")
+            logger.warning(f"   Message signature: {message_signature[:60]}...")
+            logger.warning(f"   Skipping to prevent duplicate emails and Crisp messages")
+            return jsonify({'status': 'success', 'message': 'Already processed (duplicate)'}), 200
+        
+        # Add to processed messages
+        PROCESSED_MESSAGES.add(message_signature)
+        logger.info(f"   Message signature: {message_signature[:60]}...")
+        
+        # Clean up old entries if set gets too large
+        if len(PROCESSED_MESSAGES) > MAX_PROCESSED_SIZE:
+            # Remove oldest entries (simple FIFO - remove first 100)
+            to_remove = list(PROCESSED_MESSAGES)[:100]
+            for msg in to_remove:
+                PROCESSED_MESSAGES.discard(msg)
+            logger.info(f"   Cleaned up {len(to_remove)} old processed message signatures")
         
         # Get conversation metadata to determine who should receive this
         meta = get_conversation_meta(session_id)
