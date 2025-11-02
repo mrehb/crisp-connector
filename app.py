@@ -255,6 +255,15 @@ def send_email_via_mailgun(to_email, cc_email, subject, body_text, body_html=Non
     Returns:
         bool: True if sent successfully
     """
+    logger.info(f"📧 send_email_via_mailgun called:")
+    logger.info(f"   To: {to_email}")
+    logger.info(f"   CC: {cc_email if cc_email else '(none)'}")
+    logger.info(f"   Subject: {subject}")
+    logger.info(f"   Session ID: {session_id}")
+    logger.info(f"   Body length: {len(body_text) if body_text else 0} chars")
+    logger.info(f"   MAILGUN_DOMAIN: {MAILGUN_DOMAIN}")
+    logger.info(f"   MAILGUN_API_KEY configured: {'Yes' if MAILGUN_API_KEY else 'No'}")
+    
     try:
         # Create conversation email address with session ID for tracking
         # Use this as the From address so ALL replies go to this address
@@ -266,7 +275,6 @@ def send_email_via_mailgun(to_email, cc_email, subject, body_text, body_html=Non
         data = {
             'from': from_display,
             'to': to_email,
-            'cc': cc_email,
             'subject': subject,
             'text': body_text,
             'h:Reply-To': conversation_email,  # Also set Reply-To for clients that use it
@@ -274,17 +282,30 @@ def send_email_via_mailgun(to_email, cc_email, subject, body_text, body_html=Non
             'o:tag': ['jotform-integration', 'distributor-forwarding']
         }
         
+        # Only add CC if provided (Mailgun may reject empty strings)
+        if cc_email and cc_email.strip():
+            data['cc'] = cc_email.strip()
+        
         # Add HTML version if provided
         if body_html:
             data['html'] = body_html
         
+        logger.info(f"   Prepared Mailgun data:")
+        logger.info(f"     From: {data.get('from')}")
+        logger.info(f"     To: {data.get('to')}")
+        logger.info(f"     CC: {data.get('cc', '(none)')}")
+        logger.info(f"     Subject: {data.get('subject')}")
+        logger.info(f"     API URL: {MAILGUN_API_BASE}/messages")
+        
         # Send via Mailgun API
+        logger.info(f"   Sending request to Mailgun API...")
         response = requests.post(
             f'{MAILGUN_API_BASE}/messages',
             auth=('api', MAILGUN_API_KEY),
             data=data,
             timeout=10
         )
+        logger.info(f"   Mailgun API response status: {response.status_code}")
         
         response.raise_for_status()
         result = response.json()
@@ -293,10 +314,17 @@ def send_email_via_mailgun(to_email, cc_email, subject, body_text, body_html=Non
         logger.info(f"  To: {to_email}, CC: {cc_email}, Session: {session_id}")
         return True
         
+    except requests.exceptions.RequestException as e:
+        logger.error(f"❌ Mailgun API request failed: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            logger.error(f"   Response Status: {e.response.status_code}")
+            logger.error(f"   Response Body: {e.response.text[:500]}")
+        return False
     except Exception as e:
-        logger.error(f"Error sending email via Mailgun: {e}")
-        if 'response' in locals():
-            logger.error(f"Response: {response.text}")
+        logger.error(f"❌ Unexpected error sending email via Mailgun: {e}")
+        logger.error(f"   Error type: {type(e).__name__}")
+        import traceback
+        logger.error(f"   Traceback: {traceback.format_exc()}")
         return False
 
 
@@ -1220,16 +1248,28 @@ This reply was automatically captured from email and posted to Crisp.
         
         # Forward the reply to the other party
         if forward_to:
-            logger.info(f"📧 Forwarding email to: {forward_to}")
+            logger.info(f"📧 Attempting to forward email to: {forward_to}")
             logger.info(f"   From: {sender}")
             logger.info(f"   Subject: {subject}")
+            logger.info(f"   Body length: {len(body_plain) if body_plain else 0} chars")
+            
+            # Validate email address format
+            if not forward_to or '@' not in forward_to:
+                logger.error(f"❌ Invalid email address: {forward_to}")
+                return jsonify({'status': 'error', 'message': 'Invalid email address'}), 400
             
             # Create clean reply (remove quoted text if needed)
-            clean_body = body_plain
+            clean_body = body_plain if body_plain else "(No message content)"
+            
+            logger.info(f"   Calling send_email_via_mailgun with:")
+            logger.info(f"     to_email: {forward_to}")
+            logger.info(f"     cc_email: (empty - no CC on replies)")
+            logger.info(f"     subject: Re: {subject}")
+            logger.info(f"     session_id: {session_id}")
             
             forward_success = send_email_via_mailgun(
                 to_email=forward_to,
-                cc_email='',  # No CC on replies to avoid loops
+                cc_email=None,  # No CC on replies to avoid loops (None is better than empty string)
                 subject=f"Re: {subject}",
                 body_text=clean_body,
                 body_html=body_html,
@@ -1240,7 +1280,9 @@ This reply was automatically captured from email and posted to Crisp.
                 logger.info(f"✅ Successfully forwarded reply to: {forward_to}")
             else:
                 logger.error(f"❌ Failed to forward reply to: {forward_to}")
-                logger.error(f"   Check Mailgun API logs for details")
+                logger.error(f"   Check Mailgun API configuration and logs")
+                logger.error(f"   MAILGUN_API_KEY configured: {'Yes' if MAILGUN_API_KEY else 'No'}")
+                logger.error(f"   MAILGUN_DOMAIN configured: {MAILGUN_DOMAIN}")
         else:
             logger.warning(f"⚠️ forward_to is None - skipping email forwarding")
         
