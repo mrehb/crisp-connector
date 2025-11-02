@@ -1316,6 +1316,26 @@ def get_conversation_meta(session_id):
         return {}
 
 
+@app.route('/debug/config', methods=['GET'])
+def debug_config():
+    """Debug endpoint to check configuration (no sensitive data exposed)"""
+    return jsonify({
+        'status': 'ok',
+        'config': {
+            'crisp_configured': bool(CRISP_WEBSITE_ID and CRISP_IDENTIFIER and CRISP_KEY),
+            'mailgun_api_key_configured': bool(MAILGUN_API_KEY),
+            'mailgun_domain_configured': bool(MAILGUN_DOMAIN),
+            'mailgun_from_email_configured': bool(MAILGUN_FROM_EMAIL),
+            'mailgun_from_name_configured': bool(MAILGUN_FROM_NAME),
+            'mailgun_domain_value': MAILGUN_DOMAIN if MAILGUN_DOMAIN else 'NOT SET',
+            'mailgun_from_email_value': MAILGUN_FROM_EMAIL if MAILGUN_FROM_EMAIL else 'NOT SET',
+            'mailgun_from_name_value': MAILGUN_FROM_NAME if MAILGUN_FROM_NAME else 'NOT SET',
+            'csv_countries_loaded': len(COUNTRY_ROUTING),
+            'test_country_AQ': COUNTRY_ROUTING.get('AQ', 'Not found in CSV')
+        }
+    }), 200
+
+
 @app.route('/', methods=['GET'])
 def index():
     """
