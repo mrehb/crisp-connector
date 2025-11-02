@@ -1178,6 +1178,21 @@ def mailgun_incoming_webhook():
         body_plain = request.form.get('body-plain', '')
         body_html = request.form.get('body-html', '')
         
+        # Get Mailgun message signature for deduplication (most reliable)
+        mailgun_signature = request.form.get('signature', '')
+        mailgun_timestamp = request.form.get('timestamp', '')
+        mailgun_token = request.form.get('token', '')
+        
+        # Also try to get Message-ID from headers if available
+        message_id = request.headers.get('Message-Id', '') or request.form.get('Message-Id', '')
+        
+        logger.info(f"Mailgun deduplication fields:")
+        logger.info(f"   Signature: {mailgun_signature[:30] if mailgun_signature else 'N/A'}...")
+        logger.info(f"   Timestamp: {mailgun_timestamp}")
+        logger.info(f"   Token: {mailgun_token[:30] if mailgun_token else 'N/A'}...")
+        logger.info(f"   Message-ID: {message_id}")
+        logger.info(f"   All form keys: {list(request.form.keys())}")
+        
         # Extract session ID from custom header or recipient
         session_id = request.form.get('X-Crisp-Session-ID', '')
         
@@ -1198,20 +1213,40 @@ def mailgun_incoming_webhook():
             return jsonify({'error': 'Session ID not found'}), 400
         
         # Create message signature for deduplication
-        # Use sender + session_id + subject + body hash to detect duplicates
-        body_hash = hashlib.md5(body_plain.encode()).hexdigest()[:16] if body_plain else ''
-        message_signature = f"{sender}:{session_id}:{subject}:{body_hash}"
+        # Priority: Use Mailgun signature + token + timestamp (most reliable)
+        # Fallback: Use message-id, or sender + session_id + subject + body hash
+        if mailgun_signature and mailgun_token and mailgun_timestamp:
+            # Best: Use Mailgun's own signature (unique per message)
+            message_signature = f"mg:{mailgun_signature}:{mailgun_token}:{mailgun_timestamp}"
+            logger.info(f"Using Mailgun signature for deduplication")
+        elif message_id:
+            # Good: Use Message-ID header (unique per message)
+            message_signature = f"msgid:{message_id}"
+            logger.info(f"Using Message-ID for deduplication")
+        else:
+            # Fallback: Use sender + session_id + subject + body hash
+            body_hash = hashlib.md5(body_plain.encode()).hexdigest()[:16] if body_plain else ''
+            message_signature = f"fallback:{sender}:{session_id}:{subject}:{body_hash}"
+            logger.info(f"Using fallback signature for deduplication")
+        
+        logger.info(f"   Message signature: {message_signature[:80]}...")
+        logger.info(f"   Processed messages count: {len(PROCESSED_MESSAGES)}")
         
         # Check if we've already processed this message
         if message_signature in PROCESSED_MESSAGES:
-            logger.warning(f"⚠️  Duplicate message detected - already processed")
-            logger.warning(f"   Message signature: {message_signature[:60]}...")
+            logger.warning(f"⚠️  DUPLICATE MESSAGE DETECTED - ALREADY PROCESSED")
+            logger.warning(f"   Message signature: {message_signature[:80]}...")
             logger.warning(f"   Skipping to prevent duplicate emails and Crisp messages")
             return jsonify({'status': 'success', 'message': 'Already processed (duplicate)'}), 200
         
-        # Add to processed messages
+        # Add to processed messages IMMEDIATELY (before ANY processing)
+        # This must happen BEFORE we call any other functions to prevent duplicates
         PROCESSED_MESSAGES.add(message_signature)
-        logger.info(f"   Message signature: {message_signature[:60]}...")
+        logger.info(f"✅ Added message to processed set (now: {len(PROCESSED_MESSAGES)} messages)")
+        logger.info(f"⚠️  IMPORTANT: If you see duplicate messages, check if:")
+        logger.info(f"   1. Mailgun has multiple routes forwarding to this endpoint")
+        logger.info(f"   2. Multiple worker processes (each has its own PROCESSED_MESSAGES set)")
+        logger.info(f"   3. The message signature is different each time (check logs above)")
         
         # Clean up old entries if set gets too large
         if len(PROCESSED_MESSAGES) > MAX_PROCESSED_SIZE:
