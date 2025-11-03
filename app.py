@@ -1552,14 +1552,22 @@ def forward_to_distributor_action(session_id):
         
         if email_sent:
             # Send customer-facing message with distributor info
-            customer_message_text = f"""Your message has been forwarded to the distributor in your area.
+            customer_message_text = f"""Thank you for your request!
 
-Distributor Contact Information:
-Email: {distributor_email}
+Your message has been forwarded to the distributor responsible for your territory ({country_name}).
 
-They will respond to you shortly. You can also contact them directly at the email address above.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DISTRIBUTOR CONTACT INFORMATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Thank you for your patience!"""
+📧 Email: {distributor_email}
+🌍 Territory: {country_name}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Your distributor will respond to you shortly. You can also reach out to them directly using the email address above for faster assistance.
+
+Thank you for choosing our products!"""
             
             send_crisp_message(session_id, customer_message_text)
             
