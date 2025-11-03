@@ -1,0 +1,17 @@
+{
+  "name": "Forward to Distributor",
+  "description": "Automatically forward customer conversations to country distributors",
+  "version": "1.0.0",
+  "author": {
+    "name": "BigMax Golf",
+    "email": "support@bigmaxgolf.com"
+  },
+  "permissions": [
+    "conversation:read",
+    "conversation:write"
+  ],
+  "widget": {
+    "type": "generic"
+  }
+}
+

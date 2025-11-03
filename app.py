@@ -1467,6 +1467,83 @@ def debug_config():
     }), 200
 
 
+@app.route('/action/forward-to-distributor/<session_id>', methods=['POST', 'GET'])
+def forward_to_distributor_action(session_id):
+    """Manual action to forward conversation to distributor"""
+    try:
+        logger.info(f"FORWARD TO DISTRIBUTOR ACTION - Session: {session_id}")
+        
+        # Get conversation metadata
+        meta = get_conversation_meta(session_id)
+        customer_email = meta.get('email', '') or meta.get('data', {}).get('customer_email', '')
+        customer_name = meta.get('nickname', 'Customer')
+        
+        if not customer_email:
+            return jsonify({'error': 'Customer email not found'}), 400
+        
+        # Get country and distributor info
+        country_code = meta.get('device', {}).get('geolocation', {}).get('country', '')
+        country_name = meta.get('data', {}).get('form_country', country_code)
+        agent_id, distributor_email = get_agent_for_country(country_code)
+        
+        if not distributor_email:
+            return jsonify({'error': 'No distributor found', 'country': country_code}), 404
+        
+        # Assign to Golf Tech Helpdesk
+        GOLF_TECH_HELPDESK = '1768be3b-bc0d-44cd-ae56-2cf795045b10'
+        assign_conversation_to_agent(session_id, GOLF_TECH_HELPDESK)
+        
+        # Get customer message
+        url = f'{CRISP_API_BASE}/website/{CRISP_WEBSITE_ID}/conversation/{session_id}/messages'
+        response = requests.get(url, auth=CRISP_AUTH, headers=CRISP_HEADERS, timeout=10)
+        messages = response.json().get('data', [])
+        customer_message = "No message content available"
+        for msg in reversed(messages):
+            if msg.get('from') == 'user' and msg.get('type') == 'text':
+                customer_message = msg.get('content', '')
+                break
+        
+        # Send email to distributor
+        text_body, html_body = create_email_body(
+            customer_name, customer_email, customer_message,
+            country_name, '', meta.get('device', {}).get('geolocation', {})
+        )
+        subject = f"Customer Inquiry - {customer_name} ({country_code})"
+        email_sent = send_email_via_mailgun(
+            to_email=distributor_email, cc_email=None, subject=subject,
+            body_text=text_body, body_html=html_body, session_id=session_id
+        )
+        
+        if email_sent:
+            # Send customer-facing message with distributor info
+            customer_message_text = f"""Your message has been forwarded to the distributor in your area.
+
+Distributor Contact Information:
+Email: {distributor_email}
+
+They will respond to you shortly. You can also contact them directly at the email address above.
+
+Thank you for your patience!"""
+            
+            send_crisp_message(session_id, customer_message_text)
+            
+            # Internal note
+            internal_note = f"✅ Manually forwarded to distributor: {distributor_email}"
+            send_crisp_message(session_id, internal_note)
+            
+            return jsonify({
+                'status': 'success',
+                'message': 'Forwarded to distributor',
+                'distributor': distributor_email
+            }), 200
+        else:
+            return jsonify({'error': 'Failed to send email'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/', methods=['GET'])
 def index():
     """

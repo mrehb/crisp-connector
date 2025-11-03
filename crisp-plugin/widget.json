@@ -1,0 +1,50 @@
+{
+  "schema": {
+    "sections": [
+      {
+        "id": "distributor_info",
+        "title": "Distributor Information",
+        "items": [
+          {
+            "type": "data",
+            "id": "country",
+            "label": "Country",
+            "value": "{{conversation.meta.data.form_country}}"
+          },
+          {
+            "type": "data",
+            "id": "distributor_email",
+            "label": "Distributor Email",
+            "value": "{{conversation.meta.data.distributor_email}}"
+          }
+        ]
+      },
+      {
+        "id": "actions",
+        "title": "Actions",
+        "items": [
+          {
+            "type": "button",
+            "id": "forward_button",
+            "label": "Forward to Distributor",
+            "theme": "primary",
+            "action": {
+              "type": "http_request",
+              "method": "POST",
+              "url": "https://crisp-connector-production.up.railway.app/action/forward-to-distributor/{{conversation.session_id}}",
+              "on_success": {
+                "type": "notification",
+                "message": "Successfully forwarded to distributor!"
+              },
+              "on_error": {
+                "type": "notification",
+                "message": "Error: {{error}}"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
+

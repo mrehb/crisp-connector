@@ -1,0 +1,18 @@
+ICON PLACEHOLDER
+
+You need to create a 128x128 PNG icon file named "icon.png" in this directory.
+
+Recommended options:
+1. Use an online icon generator (e.g., favicon.io, iconifier.net)
+2. Use a design tool (Figma, Canva, Photoshop)
+3. Use a simple forward arrow or envelope icon
+
+Suggested design:
+- Size: 128x128 pixels
+- Format: PNG with transparency
+- Style: Simple forward arrow (→) or envelope icon
+- Colors: Blue (#4A90E2) background with white icon
+- Keep it minimal and recognizable
+
+Once created, save as: icon.png (replace this placeholder file)
+
