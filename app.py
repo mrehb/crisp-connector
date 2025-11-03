@@ -245,6 +245,39 @@ def unassign_conversation(session_id):
         return False
 
 
+def assign_to_helpdesk_and_move_to_inbox(session_id, inbox_id='not_assigned'):
+    """
+    Assign conversation to Golf Tech Helpdesk and move to specific inbox
+    
+    Args:
+        session_id: The conversation session ID
+        inbox_id: The inbox to move to (default: 'not_assigned')
+    """
+    try:
+        GOLF_TECH_HELPDESK = '1768be3b-bc0d-44cd-ae56-2cf795045b10'
+        url = f'{CRISP_API_BASE}/website/{CRISP_WEBSITE_ID}/conversation/{session_id}/routing'
+        
+        # Try to set both agent and inbox
+        payload = {
+            'assigned': {
+                'user_id': GOLF_TECH_HELPDESK
+            },
+            'inbox_id': inbox_id
+        }
+        
+        response = requests.patch(url, auth=CRISP_AUTH, headers=CRISP_HEADERS, json=payload, timeout=10)
+        response.raise_for_status()
+        
+        logger.info(f"Assigned to Helpdesk and moved to inbox '{inbox_id}' for session: {session_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Error setting agent and inbox: {e}")
+        logger.error(f"Response: {response.text if 'response' in locals() else 'N/A'}")
+        # Fallback: Just assign to helpdesk without inbox parameter
+        logger.info(f"Trying fallback: assign to helpdesk only")
+        return assign_conversation_to_agent(session_id, GOLF_TECH_HELPDESK)
+
+
 def get_agent_for_country(country_code):
     """
     Get the agent ID for a given country code
@@ -1491,10 +1524,10 @@ def forward_to_distributor_action(session_id):
         if not distributor_email:
             return jsonify({'error': 'No distributor found', 'country': country_code}), 404
         
-        # Step 1: Assign to Golf Tech Helpdesk (before forwarding)
-        GOLF_TECH_HELPDESK = '1768be3b-bc0d-44cd-ae56-2cf795045b10'
-        assign_conversation_to_agent(session_id, GOLF_TECH_HELPDESK)
-        logger.info(f"Step 1: Assigned to Golf Tech Helpdesk before forwarding")
+        # Assign to Golf Tech Helpdesk and move to "not assigned" inbox
+        # This keeps the agent as Helpdesk but moves it to the sub-inbox
+        assign_to_helpdesk_and_move_to_inbox(session_id, inbox_id='not_assigned')
+        logger.info(f"Assigned to Golf Tech Helpdesk and moved to 'not assigned' inbox")
         
         # Get customer message
         url = f'{CRISP_API_BASE}/website/{CRISP_WEBSITE_ID}/conversation/{session_id}/messages'
@@ -1534,10 +1567,8 @@ Thank you for your patience!"""
             internal_note = f"✅ Manually forwarded to distributor: {distributor_email}"
             send_crisp_message(session_id, internal_note)
             
-            # Step 2: Unassign conversation to move it to "not assigned" sub-inbox
-            # This removes it from Golf Tech Helpdesk's active inbox
-            unassign_conversation(session_id)
-            logger.info(f"Step 2: Unassigned - moved to 'not assigned' sub-inbox")
+            # Note: Agent is Golf Tech Helpdesk, conversation is in "not assigned" sub-inbox
+            logger.info(f"Conversation forwarded successfully - Agent: Helpdesk, Inbox: not_assigned")
             
             return jsonify({
                 'status': 'success',
