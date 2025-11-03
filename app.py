@@ -1560,6 +1560,51 @@ def plugin_widget():
         return "<html><body><h1>Error loading widget</h1></body></html>", 500, {'Content-Type': 'text/html'}
 
 
+@app.route('/api/conversation/<session_id>', methods=['GET'])
+def get_conversation_info(session_id):
+    """API endpoint to get conversation information for the widget"""
+    try:
+        logger.info(f"Widget requesting conversation info for: {session_id}")
+        
+        # Get conversation metadata from Crisp
+        meta = get_conversation_meta(session_id)
+        
+        if not meta:
+            return jsonify({
+                'error': 'Conversation not found',
+                'country': 'Not available',
+                'distributor_email': None
+            }), 404
+        
+        # Extract country information
+        country = meta.get('data', {}).get('form_country') or \
+                 meta.get('device', {}).get('geolocation', {}).get('country', 'Unknown')
+        
+        # Extract distributor email
+        distributor_email = meta.get('data', {}).get('distributor_email')
+        
+        # Get country code for lookup if we don't have distributor in metadata
+        if not distributor_email:
+            country_code = meta.get('device', {}).get('geolocation', {}).get('country', '')
+            if country_code:
+                agent_id, distributor_email = get_agent_for_country(country_code)
+        
+        return jsonify({
+            'session_id': session_id,
+            'country': country,
+            'distributor_email': distributor_email,
+            'has_distributor': bool(distributor_email)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting conversation info: {e}", exc_info=True)
+        return jsonify({
+            'error': str(e),
+            'country': 'Error',
+            'distributor_email': None
+        }), 500
+
+
 @app.route('/', methods=['GET'])
 def index():
     """

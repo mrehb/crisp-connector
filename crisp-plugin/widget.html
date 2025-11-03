@@ -156,39 +156,82 @@
         let distributorEmail = null;
         
         // Initialize when Crisp SDK is ready
-        CrispSDK.onReady(() => {
-            loadConversationData();
-        });
+        window.$crisp = [];
+        window.CRISP_WEBSITE_ID = "PLACEHOLDER";
         
-        async function loadConversationData() {
+        // Listen for SDK ready event
+        if (typeof CrispSDK !== 'undefined') {
+            CrispSDK.onReady(() => {
+                console.log('Crisp SDK Ready');
+                loadConversationData();
+            });
+        } else {
+            // Fallback: try to load immediately
+            setTimeout(loadConversationData, 1000);
+        }
+        
+        function loadConversationData() {
             try {
-                // Get conversation metadata
-                const metadata = await CrispSDK.getConversationMeta();
-                sessionId = metadata.session_id;
+                console.log('Loading conversation data...');
                 
-                // Get country from metadata
-                const country = metadata.data?.form_country || 
-                               metadata.device?.geolocation?.country || 
-                               'Not available';
-                document.getElementById('country').textContent = country;
+                // Method 1: Try to get session ID from URL parameters
+                const urlParams = new URLSearchParams(window.location.search);
+                sessionId = urlParams.get('session_id') || urlParams.get('sessionId');
+                console.log('Session ID from URL:', sessionId);
                 
-                // Get distributor email from metadata
-                distributorEmail = metadata.data?.distributor_email || null;
-                const emailElement = document.getElementById('distributor-email');
-                
-                if (distributorEmail) {
-                    emailElement.textContent = distributorEmail;
-                    emailElement.classList.remove('empty');
-                } else {
-                    emailElement.textContent = 'No distributor assigned';
-                    emailElement.classList.add('empty');
-                    document.getElementById('forward-button').disabled = true;
+                // Method 2: Try Crisp context
+                if (!sessionId && typeof CRISP_TOKEN_ID !== 'undefined') {
+                    sessionId = CRISP_TOKEN_ID;
+                    console.log('Session ID from CRISP_TOKEN_ID:', sessionId);
                 }
+                
+                // Method 3: Try from parent window
+                if (!sessionId && window.parent && window.parent.location.href.includes('session_')) {
+                    const match = window.parent.location.href.match(/session_([a-f0-9-]+)/);
+                    if (match) {
+                        sessionId = 'session_' + match[1];
+                        console.log('Session ID from parent URL:', sessionId);
+                    }
+                }
+                
+                if (!sessionId) {
+                    console.error('Could not determine session ID');
+                    showError('Session ID not available');
+                    return;
+                }
+                
+                // Fetch conversation data from our backend
+                fetch(`https://crisp-connector-production.up.railway.app/api/conversation/${sessionId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('Conversation data:', data);
+                        
+                        // Update UI with data
+                        const country = data.country || 'Not available';
+                        document.getElementById('country').textContent = country;
+                        
+                        distributorEmail = data.distributor_email || null;
+                        const emailElement = document.getElementById('distributor-email');
+                        
+                        if (distributorEmail) {
+                            emailElement.textContent = distributorEmail;
+                            emailElement.classList.remove('empty');
+                        } else {
+                            emailElement.textContent = 'No distributor assigned';
+                            emailElement.classList.add('empty');
+                            document.getElementById('forward-button').disabled = true;
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching conversation data:', error);
+                        // Fallback: show basic info
+                        document.getElementById('country').textContent = 'Unable to load';
+                        document.getElementById('distributor-email').textContent = 'Unable to load';
+                    });
+                    
             } catch (error) {
-                console.error('Error loading conversation data:', error);
-                document.getElementById('country').textContent = 'Error loading data';
-                document.getElementById('distributor-email').textContent = 'Error loading data';
-                document.getElementById('forward-button').disabled = true;
+                console.error('Error in loadConversationData:', error);
+                showError('Error loading data: ' + error.message);
             }
         }
         
@@ -224,8 +267,14 @@
                 
                 if (response.ok) {
                     successDiv.classList.add('active');
-                    // Notify Crisp
-                    CrispSDK.createNotification('success', 'Successfully forwarded to distributor!');
+                    // Try to notify Crisp if available
+                    try {
+                        if (typeof CrispSDK !== 'undefined' && CrispSDK.createNotification) {
+                            CrispSDK.createNotification('success', 'Successfully forwarded to distributor!');
+                        }
+                    } catch (e) {
+                        console.log('Could not create Crisp notification:', e);
+                    }
                 } else {
                     showError(data.error || 'Failed to forward');
                 }
@@ -242,7 +291,15 @@
             const errorDiv = document.getElementById('error');
             errorDiv.textContent = message;
             errorDiv.classList.add('active');
-            CrispSDK.createNotification('error', message);
+            
+            // Try to show Crisp notification if available
+            try {
+                if (typeof CrispSDK !== 'undefined' && CrispSDK.createNotification) {
+                    CrispSDK.createNotification('error', message);
+                }
+            } catch (e) {
+                console.log('Could not create Crisp notification:', e);
+            }
         }
     </script>
 </body>
