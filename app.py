@@ -1544,6 +1544,22 @@ Thank you for your patience!"""
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/plugin/widget', methods=['GET'])
+def plugin_widget():
+    """Serve the Crisp plugin widget HTML"""
+    try:
+        widget_path = os.path.join(os.path.dirname(__file__), 'crisp-plugin', 'widget.html')
+        with open(widget_path, 'r', encoding='utf-8') as f:
+            html_content = f.read()
+        return html_content, 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except FileNotFoundError:
+        logger.error("Widget HTML file not found")
+        return "<html><body><h1>Widget not found</h1></body></html>", 404, {'Content-Type': 'text/html'}
+    except Exception as e:
+        logger.error(f"Error serving widget: {e}")
+        return "<html><body><h1>Error loading widget</h1></body></html>", 500, {'Content-Type': 'text/html'}
+
+
 @app.route('/', methods=['GET'])
 def index():
     """

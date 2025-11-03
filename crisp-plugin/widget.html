@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Forward to Distributor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
+            font-size: 14px;
+            color: #1c1e21;
+            padding: 16px;
+            background: transparent;
+        }
+        
+        .section {
+            margin-bottom: 20px;
+        }
+        
+        .section-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #6c7680;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+        }
+        
+        .info-row {
+            margin-bottom: 12px;
+        }
+        
+        .info-label {
+            font-size: 12px;
+            color: #6c7680;
+            margin-bottom: 4px;
+        }
+        
+        .info-value {
+            font-size: 14px;
+            color: #1c1e21;
+            font-weight: 500;
+            word-break: break-word;
+        }
+        
+        .info-value.empty {
+            color: #a0a8b0;
+            font-style: italic;
+        }
+        
+        .button {
+            width: 100%;
+            padding: 12px 16px;
+            background: #1972f5;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+        
+        .button:hover {
+            background: #0d5dd6;
+        }
+        
+        .button:active {
+            transform: scale(0.98);
+        }
+        
+        .button:disabled {
+            background: #e4e6e9;
+            color: #a0a8b0;
+            cursor: not-allowed;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            color: #6c7680;
+            font-size: 13px;
+            margin-top: 12px;
+        }
+        
+        .loading.active {
+            display: block;
+        }
+        
+        .error {
+            color: #e74c3c;
+            font-size: 12px;
+            margin-top: 8px;
+            padding: 8px;
+            background: #fee;
+            border-radius: 4px;
+            display: none;
+        }
+        
+        .error.active {
+            display: block;
+        }
+        
+        .success {
+            color: #27ae60;
+            font-size: 12px;
+            margin-top: 8px;
+            padding: 8px;
+            background: #efe;
+            border-radius: 4px;
+            display: none;
+        }
+        
+        .success.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="section">
+        <div class="section-title">Distributor Information</div>
+        
+        <div class="info-row">
+            <div class="info-label">Country</div>
+            <div class="info-value" id="country">Loading...</div>
+        </div>
+        
+        <div class="info-row">
+            <div class="info-label">Distributor Email</div>
+            <div class="info-value" id="distributor-email">Loading...</div>
+        </div>
+    </div>
+    
+    <div class="section">
+        <div class="section-title">Actions</div>
+        
+        <button class="button" id="forward-button" onclick="forwardToDistributor()">
+            Forward to Distributor
+        </button>
+        
+        <div class="loading" id="loading">Processing...</div>
+        <div class="error" id="error"></div>
+        <div class="success" id="success">Successfully forwarded to distributor!</div>
+    </div>
+    
+    <script src="https://plugin.crisp.chat/sdk.js"></script>
+    <script>
+        let sessionId = null;
+        let distributorEmail = null;
+        
+        // Initialize when Crisp SDK is ready
+        CrispSDK.onReady(() => {
+            loadConversationData();
+        });
+        
+        async function loadConversationData() {
+            try {
+                // Get conversation metadata
+                const metadata = await CrispSDK.getConversationMeta();
+                sessionId = metadata.session_id;
+                
+                // Get country from metadata
+                const country = metadata.data?.form_country || 
+                               metadata.device?.geolocation?.country || 
+                               'Not available';
+                document.getElementById('country').textContent = country;
+                
+                // Get distributor email from metadata
+                distributorEmail = metadata.data?.distributor_email || null;
+                const emailElement = document.getElementById('distributor-email');
+                
+                if (distributorEmail) {
+                    emailElement.textContent = distributorEmail;
+                    emailElement.classList.remove('empty');
+                } else {
+                    emailElement.textContent = 'No distributor assigned';
+                    emailElement.classList.add('empty');
+                    document.getElementById('forward-button').disabled = true;
+                }
+            } catch (error) {
+                console.error('Error loading conversation data:', error);
+                document.getElementById('country').textContent = 'Error loading data';
+                document.getElementById('distributor-email').textContent = 'Error loading data';
+                document.getElementById('forward-button').disabled = true;
+            }
+        }
+        
+        async function forwardToDistributor() {
+            if (!sessionId) {
+                showError('Session ID not available');
+                return;
+            }
+            
+            if (!distributorEmail) {
+                showError('No distributor available for this country');
+                return;
+            }
+            
+            // Show loading state
+            const button = document.getElementById('forward-button');
+            const loading = document.getElementById('loading');
+            const errorDiv = document.getElementById('error');
+            const successDiv = document.getElementById('success');
+            
+            button.disabled = true;
+            loading.classList.add('active');
+            errorDiv.classList.remove('active');
+            successDiv.classList.remove('active');
+            
+            try {
+                const response = await fetch(
+                    `https://crisp-connector-production.up.railway.app/action/forward-to-distributor/${sessionId}`,
+                    { method: 'POST' }
+                );
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    successDiv.classList.add('active');
+                    // Notify Crisp
+                    CrispSDK.createNotification('success', 'Successfully forwarded to distributor!');
+                } else {
+                    showError(data.error || 'Failed to forward');
+                }
+            } catch (error) {
+                console.error('Error forwarding:', error);
+                showError('Network error. Please try again.');
+            } finally {
+                loading.classList.remove('active');
+                button.disabled = false;
+            }
+        }
+        
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.classList.add('active');
+            CrispSDK.createNotification('error', message);
+        }
+    </script>
+</body>
+</html>
+
