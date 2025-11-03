@@ -223,6 +223,28 @@ def assign_conversation_to_agent(session_id, agent_user_id):
         return False
 
 
+def unassign_conversation(session_id):
+    """
+    Unassign a conversation (move to 'not assigned' state)
+    This moves the conversation out of the assigned agent's inbox
+    """
+    try:
+        url = f'{CRISP_API_BASE}/website/{CRISP_WEBSITE_ID}/conversation/{session_id}/routing'
+        payload = {
+            'assigned': None
+        }
+        
+        response = requests.patch(url, auth=CRISP_AUTH, headers=CRISP_HEADERS, json=payload, timeout=10)
+        response.raise_for_status()
+        
+        logger.info(f"Unassigned conversation {session_id} - moved to 'not assigned'")
+        return True
+    except Exception as e:
+        logger.error(f"Error unassigning conversation: {e}")
+        logger.error(f"Response: {response.text if 'response' in locals() else 'N/A'}")
+        return False
+
+
 def get_agent_for_country(country_code):
     """
     Get the agent ID for a given country code
@@ -616,23 +638,19 @@ def process_with_email_forwarding(form_data, geolocation, ip_address):
     country_code = geolocation.get('country_code', '')
     agent_id_from_csv, distributor_email = get_agent_for_country(country_code)
     
-    # NEW LOGIC: Always assign to an agent based on priority:
-    # 1. Use agent_id from CSV if it exists
-    # 2. If no agent_id but distributor_email exists -> Golf Tech Helpdesk
-    # 3. If no agent_id and no distributor_email -> Golf Tech Office
+    # UPDATED LOGIC: Always assign to an agent based on distributor availability:
+    # 1. If distributor_email exists -> Golf Tech Helpdesk (ignore CSV agent assignments)
+    # 2. If no distributor_email -> Golf Tech Office
+    # Note: CSV agent assignments (UK/US) are ignored in favor of uniform Helpdesk routing
     GOLF_TECH_HELPDESK = '1768be3b-bc0d-44cd-ae56-2cf795045b10'
     GOLF_TECH_OFFICE = 'cd6d4ce1-0e0c-4bf9-afdc-4558d536332e'
     
-    if agent_id_from_csv:
-        # Priority 1: Use agent from CSV
-        agent_id = agent_id_from_csv
-        agent_source = 'CSV'
-    elif distributor_email:
-        # Priority 2: Distributor email exists -> Golf Tech Helpdesk
+    if distributor_email:
+        # Priority 1: Distributor email exists -> Golf Tech Helpdesk
         agent_id = GOLF_TECH_HELPDESK
         agent_source = 'Golf Tech Helpdesk (has distributor)'
     else:
-        # Priority 3: No distributor email -> Golf Tech Office
+        # Priority 2: No distributor email -> Golf Tech Office
         agent_id = GOLF_TECH_OFFICE
         agent_source = 'Golf Tech Office (no distributor)'
     
@@ -1514,6 +1532,10 @@ Thank you for your patience!"""
             # Internal note
             internal_note = f"✅ Manually forwarded to distributor: {distributor_email}"
             send_crisp_message(session_id, internal_note)
+            
+            # Unassign conversation to move it to "not assigned" (out of inbox)
+            unassign_conversation(session_id)
+            logger.info(f"Moved conversation to 'not assigned' after forwarding")
             
             return jsonify({
                 'status': 'success',
