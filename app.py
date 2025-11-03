@@ -638,21 +638,21 @@ def process_with_email_forwarding(form_data, geolocation, ip_address):
     country_code = geolocation.get('country_code', '')
     agent_id_from_csv, distributor_email = get_agent_for_country(country_code)
     
-    # UPDATED LOGIC: Always assign to an agent based on distributor availability:
-    # 1. If distributor_email exists -> Golf Tech Helpdesk (ignore CSV agent assignments)
-    # 2. If no distributor_email -> Golf Tech Office
-    # Note: CSV agent assignments (UK/US) are ignored in favor of uniform Helpdesk routing
+    # UPDATED LOGIC: Initial assignment based on CSV agent:
+    # 1. If agent_id from CSV exists (Tracy, Michael, etc.) -> Use that agent
+    # 2. If no agent_id from CSV -> Golf Tech Office
+    # Note: When "Forward to Distributor" is clicked, it will change to Helpdesk + unassign
     GOLF_TECH_HELPDESK = '1768be3b-bc0d-44cd-ae56-2cf795045b10'
     GOLF_TECH_OFFICE = 'cd6d4ce1-0e0c-4bf9-afdc-4558d536332e'
     
-    if distributor_email:
-        # Priority 1: Distributor email exists -> Golf Tech Helpdesk
-        agent_id = GOLF_TECH_HELPDESK
-        agent_source = 'Golf Tech Helpdesk (has distributor)'
+    if agent_id_from_csv:
+        # Priority 1: Use specific agent from CSV (Tracy, Michael, etc.)
+        agent_id = agent_id_from_csv
+        agent_source = 'Specific Agent from CSV'
     else:
-        # Priority 2: No distributor email -> Golf Tech Office
+        # Priority 2: No specific agent -> Golf Tech Office
         agent_id = GOLF_TECH_OFFICE
-        agent_source = 'Golf Tech Office (no distributor)'
+        agent_source = 'Golf Tech Office (no specific agent)'
     
     # Check if we should send email (distributor email must be non-empty)
     use_distributor_email = bool(distributor_email and distributor_email.strip())
@@ -1491,9 +1491,10 @@ def forward_to_distributor_action(session_id):
         if not distributor_email:
             return jsonify({'error': 'No distributor found', 'country': country_code}), 404
         
-        # Assign to Golf Tech Helpdesk
+        # Step 1: Assign to Golf Tech Helpdesk (before forwarding)
         GOLF_TECH_HELPDESK = '1768be3b-bc0d-44cd-ae56-2cf795045b10'
         assign_conversation_to_agent(session_id, GOLF_TECH_HELPDESK)
+        logger.info(f"Step 1: Assigned to Golf Tech Helpdesk before forwarding")
         
         # Get customer message
         url = f'{CRISP_API_BASE}/website/{CRISP_WEBSITE_ID}/conversation/{session_id}/messages'
@@ -1533,9 +1534,10 @@ Thank you for your patience!"""
             internal_note = f"✅ Manually forwarded to distributor: {distributor_email}"
             send_crisp_message(session_id, internal_note)
             
-            # Unassign conversation to move it to "not assigned" (out of inbox)
+            # Step 2: Unassign conversation to move it to "not assigned" sub-inbox
+            # This removes it from Golf Tech Helpdesk's active inbox
             unassign_conversation(session_id)
-            logger.info(f"Moved conversation to 'not assigned' after forwarding")
+            logger.info(f"Step 2: Unassigned - moved to 'not assigned' sub-inbox")
             
             return jsonify({
                 'status': 'success',
