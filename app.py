@@ -580,18 +580,18 @@ def update_crisp_contact(people_id, email, person_data):
 
 def process_with_email_forwarding(form_data, geolocation, ip_address):
     """
-    NEW APPROACH: Process contact with email forwarding through Mailgun
+    Process contact form submission and create conversation in Crisp.
     
     Flow:
     1. Create conversation in Crisp (for monitoring/tracking)
-    2. Determine routing: agent assignment vs distributor email
-    3. Send email via Mailgun to distributor with customer CC'd
-    4. Store all info in Crisp for monitoring
+    2. Determine routing: agent assignment based on country
+    3. Store all info in Crisp metadata
+    4. Email forwarding is MANUAL ONLY via widget button
     
-    This ensures 100% reliable three-way communication
+    Note: Automatic email forwarding is disabled. Use the widget button to forward manually.
     """
     logger.info("=" * 80)
-    logger.info("Processing contact with EMAIL FORWARDING approach")
+    logger.info("Processing contact form submission")
     logger.info("=" * 80)
     
     # Extract form data
@@ -694,71 +694,55 @@ def process_with_email_forwarding(form_data, geolocation, ip_address):
     logger.info(f"✅ Assigned to agent: {agent_id} ({agent_source})")
     
     # Store message in Crisp for monitoring
-    crisp_note = f"""📧 Customer inquiry forwarded via email
+    crisp_note = f"""📋 New Customer Inquiry
 
 Customer: {customer_name} ({customer_email})
-Distributor: {distributor_email if distributor_email else 'N/A'}
+Distributor: {distributor_email if distributor_email else 'N/A - No distributor for this country'}
 Location: {city}, {country} ({country_code})
 Assigned Agent: {agent_source}
 
-Original Message:
+Message:
 {message}
 
 ---
-Note: Communication is being handled via direct email between customer and distributor.
-All replies will be forwarded through our email system.
+⚠️ MANUAL FORWARDING REQUIRED
+Use the "Forward to Distributor" button in the sidebar widget to send this inquiry to the distributor.
+The customer will automatically receive the distributor's contact information.
+
 Conversation ID: {session_id}
 """
     send_crisp_message(session_id, crisp_note)
     logger.info(f"✅ Posted note to Crisp")
     
-    # Send email via Mailgun if distributor email exists
-    logger.info(f"")
-    logger.info(f"=== EMAIL SENDING DECISION ===")
-    logger.info(f"use_distributor_email: {use_distributor_email}")
-    logger.info(f"distributor_email value: '{distributor_email}'")
-    logger.info(f"distributor_email type: {type(distributor_email)}")
+    # ============================================================================
+    # AUTOMATIC EMAIL FORWARDING - DISABLED (Use widget button instead)
+    # ============================================================================
+    # To re-enable automatic forwarding, uncomment the code block below:
+    #
+    # if use_distributor_email:
+    #     text_body, html_body = create_email_body(
+    #         customer_name, customer_email, message, country, city, geolocation
+    #     )
+    #     subject = f"New Customer Inquiry - {customer_name} ({country_code})"
+    #     email_sent = send_email_via_mailgun(
+    #         to_email=distributor_email, cc_email=None, subject=subject,
+    #         body_text=text_body, body_html=html_body, session_id=session_id
+    #     )
+    #     if email_sent:
+    #         logger.info(f"✅ Email sent to distributor: {distributor_email}")
+    #     else:
+    #         logger.error(f"❌ Failed to send email via Mailgun")
+    # ============================================================================
     
-    if use_distributor_email:
-        text_body, html_body = create_email_body(
-            customer_name, 
-            customer_email, 
-            message, 
-            country, 
-            city, 
-            geolocation
-        )
-        
-        subject = f"New Customer Inquiry - {customer_name} ({country_code})"
-        
-        # Send to distributor only (no CC to customer)
-        # Customer will only receive replies from distributor
-        email_sent = send_email_via_mailgun(
-            to_email=distributor_email,
-            cc_email=None,  # No CC - only distributor receives initial email
-            subject=subject,
-            body_text=text_body,
-            body_html=html_body,
-            session_id=session_id
-        )
-        
-        if email_sent:
-            logger.info(f"✅ Email sent via Mailgun to distributor")
-            logger.info(f"   To: {distributor_email}")
-            logger.info(f"   Customer will receive replies from distributor")
-        else:
-            logger.error(f"❌ Failed to send email via Mailgun")
-            logger.error(f"   Check Mailgun configuration and logs above")
-    else:
-        logger.info(f"⚠️  Email sending SKIPPED because use_distributor_email={use_distributor_email}")
-        logger.info(f"   distributor_email: '{distributor_email}'")
-        logger.info(f"ℹ️  No distributor email, conversation remains in Crisp only")
+    logger.info(f"⚠️  Automatic email forwarding is DISABLED")
+    logger.info(f"   Use the widget 'Forward to Distributor' button to send emails manually")
     
     logger.info("=" * 80)
-    logger.info(f"✅ Successfully processed with email forwarding")
+    logger.info(f"✅ Successfully processed inquiry")
     logger.info(f"   Crisp Session: {session_id}")
     logger.info(f"   Customer: {customer_email}")
     logger.info(f"   Distributor: {distributor_email if distributor_email else 'N/A'}")
+    logger.info(f"   Status: Waiting for manual forward action")
     logger.info("=" * 80)
     
     return True
